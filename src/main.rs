@@ -1,4 +1,10 @@
-use std::{net::SocketAddr, path::PathBuf, sync::{Arc, RwLock}};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use axum::{
     extract::{
@@ -7,26 +13,41 @@ use axum::{
     },
     response::IntoResponse,
     routing::{get, post},
-    Json, Router, TypedHeader, Extension,
+    Extension, Json, Router, TypedHeader,
 };
-use midly::Smf;
+use midir::MidiOutput;
+use midly::SmfBytemap;
 use tower_http::{
     services::ServeDir,
     trace::{DefaultMakeSpan, TraceLayer},
 };
-use tracing::{error, info};
+use tracing::{error, info, instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-type MidiSources = std::collections::HashMap<String, ()>;
+struct MidiSource {
+    bytes: Vec<u8>,
+    file_name: String,
+}
+
+impl MidiSource {
+    fn midi<'a>(&'a self) -> Result<SmfBytemap<'a>, midly::Error> {
+        SmfBytemap::parse(&self.bytes)
+    }
+
+    #[instrument]
+    fn play() {}
+}
+
+type MidiSources = HashMap<String, MidiSource>;
 
 #[tokio::main]
 async fn main() {
-    let midi_sources = Arc::new(RwLock::new(MidiSources::new()));
+    let midi_sources = Arc::new(RwLock::new(MidiSources::default()));
 
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "example_websockets=debug,tower_http=debug".into()),
+                .unwrap_or_else(|_| "harmonia=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -36,8 +57,9 @@ async fn main() {
     let app = Router::new()
         .fallback_service(ServeDir::new(public_dir).append_index_html_on_directories(true))
         .route("/ws", get(websocket_handler))
-        .route("/add-midi-sources", post(add_midi_sources_handler))
-        .route("/play/:uuid", post(play_handler))
+        .route("/midi/add", post(midi_add_handler))
+        .route("/midi/play/:uuid", post(midi_play_handler))
+        .route("/midi/ports", get(midi_ports_handler))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
@@ -52,15 +74,57 @@ async fn main() {
         .unwrap();
 }
 
-async fn play_handler(
-    Path(uuid): Path<String>,
+async fn midi_ports_handler() -> Json<Vec<String>> {
+    let out = MidiOutput::new("harmonia").unwrap();
+
+    Json(
+        out.ports()
+            .iter()
+            .filter_map(|port| Result::ok(out.port_name(port)))
+            .collect(),
+    )
+}
+
+// use axum::debug_handler;
+// #[debug_handler]
+async fn midi_play_handler(
     midi_sources: Extension<Arc<RwLock<MidiSources>>>,
-) {
-    if midi_sources.read().unwrap().contains_key(&uuid) {
-        println!("playing {uuid}");
-    } else {
+    Path(uuid): Path<String>,
+) -> Json<()> {
+    let midi_sources = midi_sources.read().unwrap();
+    let Some(midi_source) = midi_sources.get(&uuid) else {
         println!("not found");
+        return Json(());
+    };
+    let midi = midi_source.midi().unwrap();
+
+    let midi_out = MidiOutput::new("harmonia").unwrap();
+    let midi_port = &midi_out.ports()[0];
+    info!(
+        "connected to output port: {}",
+        midi_out.port_name(midi_port).unwrap()
+    );
+    let mut conn_out = midi_out
+        .connect(midi_port, /* TODO: Better name */ "play")
+        .unwrap();
+
+    for (bytes, event) in midi.tracks[0].iter() {
+        match event.kind {
+            midly::TrackEventKind::Midi {
+                channel: _,
+                message,
+            } => match message {
+                midly::MidiMessage::NoteOn { .. } | midly::MidiMessage::NoteOff { .. } => {
+                    conn_out.send(bytes).unwrap();
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+                _ => {}
+            },
+            _ => {}
+        }
     }
+
+    Json(())
 }
 
 #[derive(serde::Serialize)]
@@ -71,12 +135,11 @@ struct MidiSourceLoaded {
     uuid: String,
 }
 
-async fn add_midi_sources_handler(
+async fn midi_add_handler(
     midi_sources: Extension<Arc<RwLock<MidiSources>>>,
     mut multipart: Multipart,
 ) -> Json<Vec<Result<MidiSourceLoaded, String>>> {
     let mut statuses = vec![];
-
 
     while let Some(field) = multipart.next_field().await.unwrap() {
         // TODO: Check that this is the name that we are expecting
@@ -84,14 +147,16 @@ async fn add_midi_sources_handler(
         // TODO: Better default file name
         let file_name = field.file_name().unwrap_or("<unknown>").to_string();
         let data = field.bytes().await.unwrap().to_vec();
+        let uuid = uuid::Uuid::new_v4().to_string();
 
-        statuses.push(match Smf::parse(&data) {
+        let midi_source = MidiSource {
+            bytes: data,
+            file_name: file_name.clone(),
+        };
+
+        statuses.push(match midi_source.midi() {
             Ok(midi) => {
-                let uuid = uuid::Uuid::new_v4().to_string();
-                let mut midi_sources = midi_sources.write().unwrap();
-                midi_sources.insert(uuid.clone(), ());
-
-                Ok(MidiSourceLoaded {
+                let result = Ok(MidiSourceLoaded {
                     file_name,
                     format: match midi.header.format {
                         midly::Format::SingleTrack | midly::Format::Sequential => "sequential",
@@ -99,8 +164,11 @@ async fn add_midi_sources_handler(
                     }
                     .to_string(),
                     tracks_count: midi.tracks.len(),
-                    uuid,
-                })
+                    uuid: uuid.clone(),
+                });
+                let midi_sources = &mut midi_sources.write().unwrap();
+                midi_sources.insert(uuid, midi_source);
+                result
             }
             Err(err) => Err(err.to_string()),
         });
