@@ -2,6 +2,44 @@
 let midi_sources_div = null;
 
 document.addEventListener('DOMContentLoaded', () => {
+	init_midi_sources_view();
+	init_health_check();
+});
+
+function delay(miliseconds) {
+	return new Promise(resolve => setTimeout(resolve, miliseconds));
+}
+
+async function init_health_check() {
+	/** @type{HTMLSpanElement} */
+	const app_health_span = document.getElementById('app-health');
+	for (;;) {
+		await delay(500);
+
+		let healthy = true;
+		try {
+			const response = await fetch('/api/health');
+			const text = await response.text();
+			healthy = text == "Hi";
+		} catch (err) {
+			healthy = false;
+		}
+
+		if (healthy) {
+			if (app_health_span.innerText != "connected") {
+				app_health_span.innerText = "connected";
+				app_health_span.style.color = "inherit";
+			}
+		} else {
+			if (app_health_span.innerText != "disconnected") {
+				app_health_span.innerText = "disconnected";
+				app_health_span.style.color = "red";
+			}
+		}
+	}
+}
+
+function init_midi_sources_view() {
 	const input = document.getElementById('midi-sources-input');
 	input.addEventListener('change', async function() {
 		/** @type{FileList} */
@@ -34,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
 	});
 
 	midi_sources_div = document.getElementById('midi-sources-list');
-});
+}
 
 // Create WebSocket connection.
 const socket = new WebSocket(`ws://${location.host}/api/ws`);

@@ -8,8 +8,10 @@ Harmonia is an interface for playing synchronized MIDI using [Ableton/Link](http
 
 - [x] Web server
 - [x] MIDI upload
+- [ ] Health check
+    - [x] ensure that JS knows when server is alive
+    - [ ] and thus keeps shown state in sync with the server
 - [ ] MIDI play
-- [ ] Health check - ensure that JS knows when server is alive (and thus keeps shown state in sync with the server)
 - [ ] Server state save & restore - doesn't require user to provide all files every time
 
 ## Why Rust?

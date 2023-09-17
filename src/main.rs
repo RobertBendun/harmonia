@@ -58,6 +58,7 @@ async fn main() {
 
     let app = Router::new()
         .fallback_service(ServeDir::new(public_dir).append_index_html_on_directories(true))
+        .route("/api/health", get(health_handler))
         .route("/api/ws", get(websocket_handler))
         .route("/api/midi/add", post(midi_add_handler))
         .route("/api/midi/play/:uuid", post(midi_play_handler))
@@ -75,6 +76,10 @@ async fn main() {
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .unwrap();
+}
+
+async fn health_handler() -> &'static str {
+    "Hi"
 }
 
 async fn version_handler() -> impl IntoResponse {
