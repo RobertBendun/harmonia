@@ -62,6 +62,7 @@ async fn main() {
         .route("/midi/add", post(midi_add_handler))
         .route("/midi/play/:uuid", post(midi_play_handler))
         .route("/midi/ports", get(midi_ports_handler))
+        .route("/version", get(version_handler))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
@@ -74,6 +75,26 @@ async fn main() {
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .unwrap();
+}
+
+async fn version_handler() -> impl IntoResponse {
+    #[derive(serde::Serialize)]
+    struct VersionInfo {
+        version: &'static str,
+        commit: &'static str,
+        dirty: bool,
+    }
+    let info: Vec<&str> = env!("GIT_INFO").split('_').collect();
+    let (commit, dirty) = if info.len() == 2 {
+        (info[1], true)
+    } else {
+        (info[0], false)
+    };
+    Json(VersionInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        commit,
+        dirty,
+    })
 }
 
 async fn midi_ports_handler() -> Json<Vec<String>> {
