@@ -52,6 +52,8 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    info!("starting up commit {}", env!("GIT_INFO"));
+
     let public_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
 
     let app = Router::new()
