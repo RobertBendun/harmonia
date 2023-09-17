@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
 		for (const file of fileList) {
 			formData.append('files[]', file);
 		}
-		const response = await fetch('/midi/add', { method: 'POST', body: formData });
+		const response = await fetch('/api/midi/add', { method: 'POST', body: formData });
 		for (const midi_source of await response.json()) {
 			const tile = document.createElement('div');
 			if (midi_source.Ok) {
@@ -21,7 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
 				const btn = document.createElement('button');
 				btn.innerText = 'Play';
 				btn.addEventListener('click', async () => {
-					const response = await fetch(`/midi/play/${uuid}`, { method: 'POST' });
+					const response = await fetch(`/api/midi/play/${uuid}`, { method: 'POST' });
 					const data = await response.text();
 					console.log(data);
 				});
@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Create WebSocket connection.
-const socket = new WebSocket(`ws://${location.host}/ws`);
+const socket = new WebSocket(`ws://${location.host}/api/ws`);
 
 socket.addEventListener("open", (event) => {
 	console.log("open", event);

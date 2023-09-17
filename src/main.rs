@@ -58,11 +58,11 @@ async fn main() {
 
     let app = Router::new()
         .fallback_service(ServeDir::new(public_dir).append_index_html_on_directories(true))
-        .route("/ws", get(websocket_handler))
-        .route("/midi/add", post(midi_add_handler))
-        .route("/midi/play/:uuid", post(midi_play_handler))
-        .route("/midi/ports", get(midi_ports_handler))
-        .route("/version", get(version_handler))
+        .route("/api/ws", get(websocket_handler))
+        .route("/api/midi/add", post(midi_add_handler))
+        .route("/api/midi/play/:uuid", post(midi_play_handler))
+        .route("/api/midi/ports", get(midi_ports_handler))
+        .route("/api/version", get(version_handler))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
