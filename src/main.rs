@@ -26,11 +26,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 struct MidiSource {
     bytes: Vec<u8>,
+    #[allow(dead_code)]
     file_name: String,
 }
 
 impl MidiSource {
-    fn midi<'a>(&'a self) -> Result<SmfBytemap<'a>, midly::Error> {
+    fn midi(&self) -> Result<SmfBytemap<'_>, midly::Error> {
         SmfBytemap::parse(&self.bytes)
     }
 
@@ -43,9 +44,8 @@ type MidiSources = HashMap<String, MidiSource>;
 #[tokio::main]
 async fn main() {
     let do_help = std::env::args()
-        .find(|param| param == "--help" || param == "-h")
-        .is_some();
-    let do_open = std::env::args().find(|param| param == "--open").is_some();
+        .any(|param| &param == "--help" || &param == "-h");
+    let do_open = std::env::args().any(|param| &param == "--open");
 
     if do_help {
         help_and_exit();
