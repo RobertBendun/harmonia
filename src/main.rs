@@ -42,6 +42,15 @@ type MidiSources = HashMap<String, MidiSource>;
 
 #[tokio::main]
 async fn main() {
+    let do_help = std::env::args()
+        .find(|param| param == "--help" || param == "-h")
+        .is_some();
+    let do_open = std::env::args().find(|param| param == "--open").is_some();
+
+    if do_help {
+        help_and_exit();
+    }
+
     let midi_sources = Arc::new(RwLock::new(MidiSources::default()));
 
     tracing_subscriber::registry()
@@ -72,10 +81,21 @@ async fn main() {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     info!("listening on http://{addr}");
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-        .await
-        .unwrap();
+    let server =
+        axum::Server::bind(&addr).serve(app.into_make_service_with_connect_info::<SocketAddr>());
+
+    if do_open {
+        open::that_detached(format!("http://{addr}")).unwrap();
+    }
+
+    server.await.unwrap();
+}
+
+fn help_and_exit() -> ! {
+    println!("harmonia [--open] [--help]");
+    println!("  --open - opens UI in default browser");
+    println!("  --help - prints this message");
+    std::process::exit(0);
 }
 
 async fn health_handler() -> &'static str {
