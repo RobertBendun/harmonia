@@ -24,6 +24,12 @@ use tower_http::{
 use tracing::{error, info, instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use maud::{html, Markup, DOCTYPE};
+
+use sha1::{Sha1, Digest};
+
+use base64ct::{Base64, Encoding};
+
 struct MidiSource {
     bytes: Vec<u8>,
     #[allow(dead_code)]
@@ -43,8 +49,7 @@ type MidiSources = HashMap<String, MidiSource>;
 
 #[tokio::main]
 async fn main() {
-    let do_help = std::env::args()
-        .any(|param| &param == "--help" || &param == "-h");
+    let do_help = std::env::args().any(|param| &param == "--help" || &param == "-h");
     let do_open = std::env::args().any(|param| &param == "--open");
 
     if do_help {
@@ -66,13 +71,14 @@ async fn main() {
     let public_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
 
     let app = Router::new()
-        .fallback_service(ServeDir::new(public_dir).append_index_html_on_directories(true))
+        .fallback_service(ServeDir::new(public_dir))
         .route("/api/health", get(health_handler))
         .route("/api/ws", get(websocket_handler))
-        .route("/api/midi/add", post(midi_add_handler))
+        .route("/midi/add", post(midi_add_handler))
         .route("/api/midi/play/:uuid", post(midi_play_handler))
-        .route("/api/midi/ports", get(midi_ports_handler))
+        .route("/midi/ports", get(midi_ports_handler))
         .route("/api/version", get(version_handler))
+        .route("/", get(index_handler))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
@@ -85,6 +91,7 @@ async fn main() {
         axum::Server::bind(&addr).serve(app.into_make_service_with_connect_info::<SocketAddr>());
 
     if do_open {
+        info!("opening UI in default browser");
         open::that_detached(format!("http://{addr}")).unwrap();
     }
 
@@ -96,6 +103,78 @@ fn help_and_exit() -> ! {
     println!("  --open - opens UI in default browser");
     println!("  --help - prints this message");
     std::process::exit(0);
+}
+
+async fn midi_sources_render(
+    midi_sources: Arc<RwLock<MidiSources>>,
+) -> Markup {
+    let midi_sources = midi_sources.read().unwrap();
+
+    html! {
+        @for (uuid, source) in midi_sources.iter() {
+            div data-uuid=(uuid) {
+                h3 { (source.file_name) }
+                @match source.midi() {
+                    Ok(midi) => p {
+                        "Format: ";
+                        ({
+                            match midi.header.format {
+                                midly::Format::Sequential | midly::Format::SingleTrack => "sequential",
+                                midly::Format::Parallel => "parallel",
+                            }
+                        });
+                        ", tracks count: ";
+                        (midi.tracks.len());
+                    },
+                    Err(err) => p {
+                        "Failed to parse MIDI file: ";
+                        (err);
+                    },
+                }
+            }
+        }
+    }
+}
+
+async fn index_handler(
+    midi_sources: Extension<Arc<RwLock<MidiSources>>>,
+) -> Markup {
+    html! {
+        (DOCTYPE)
+        html lang="en" {
+            (DOCTYPE)
+            head {
+                meta charset="utf-8";
+                title { "Harmonia control panel" }
+                script src="index.js" {}
+                script src="htmx.min.js" {}
+            }
+            body {
+                header {
+                    h1 { "Harmonia control panel" }
+                    "Status: "
+                    span id="app-health" {}
+                }
+                main {
+                    h2 { "MIDI ports" }
+                    (midi_ports_handler().await)
+                    h2 { "MIDI sources" }
+                    form
+                        hx-post="/midi/add"
+                        hx-target="#midi-sources-list"
+                        hx-swap="innerHTML"
+                        hx-encoding="multipart/form-data"
+                    {
+                        input id="midi-sources-input" name="files" type="file" multiple accept="audio/midi";
+                        button { "Upload" }
+                    }
+                    div id="midi-sources-list" {
+                        (midi_sources_render((*midi_sources).clone()).await)
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn health_handler() -> &'static str {
@@ -175,53 +254,30 @@ async fn midi_play_handler(
     Json(())
 }
 
-#[derive(serde::Serialize)]
-struct MidiSourceLoaded {
-    file_name: String,
-    format: String,
-    tracks_count: usize,
-    uuid: String,
-}
-
 async fn midi_add_handler(
     midi_sources: Extension<Arc<RwLock<MidiSources>>>,
     mut multipart: Multipart,
-) -> Json<Vec<Result<MidiSourceLoaded, String>>> {
-    let mut statuses = vec![];
-
+) -> Markup {
     while let Some(field) = multipart.next_field().await.unwrap() {
         // TODO: Check that this is the name that we are expecting
         let _name = field.name().unwrap().to_string();
         // TODO: Better default file name
         let file_name = field.file_name().unwrap_or("<unknown>").to_string();
         let data = field.bytes().await.unwrap().to_vec();
-        let uuid = uuid::Uuid::new_v4().to_string();
+        let mut hasher = Sha1::new();
+        hasher.update(&data);
+        let uuid = Base64::encode_string(&hasher.finalize());
 
         let midi_source = MidiSource {
             bytes: data,
             file_name: file_name.clone(),
         };
 
-        statuses.push(match midi_source.midi() {
-            Ok(midi) => {
-                let result = Ok(MidiSourceLoaded {
-                    file_name,
-                    format: match midi.header.format {
-                        midly::Format::SingleTrack | midly::Format::Sequential => "sequential",
-                        midly::Format::Parallel => "parallel",
-                    }
-                    .to_string(),
-                    tracks_count: midi.tracks.len(),
-                    uuid: uuid.clone(),
-                });
-                let midi_sources = &mut midi_sources.write().unwrap();
-                midi_sources.insert(uuid, midi_source);
-                result
-            }
-            Err(err) => Err(err.to_string()),
-        });
+        let midi_sources = &mut midi_sources.write().unwrap();
+        midi_sources.insert(uuid, midi_source);
     }
-    Json(statuses)
+
+    midi_sources_render((*midi_sources).clone()).await
 }
 
 // For expanding this websocket buisness see: https://github.com/tokio-rs/axum/blob/main/examples/websockets/src/main.rs
