@@ -77,7 +77,7 @@ async fn main() {
         .route("/midi/add", post(midi_add_handler))
         .route("/api/midi/play/:uuid", post(midi_play_handler))
         .route("/midi/ports", get(midi_ports_handler))
-        .route("/api/version", get(version_handler))
+        .route("/version", get(version_handler))
         .route("/", get(index_handler))
         .layer(
             TraceLayer::new_for_http()
@@ -154,10 +154,17 @@ async fn index_handler(
                     h1 { "Harmonia control panel" }
                     "Status: "
                     span id="app-health" {}
+                    br;
+                    (version_handler().await);
                 }
                 main {
                     h2 { "MIDI ports" }
-                    (midi_ports_handler().await)
+                    button hx-get="/midi/ports" hx-target="#midi-ports" hx-swap="innerHTML" {
+                        "Refresh"
+                    }
+                    div id="midi-ports" {
+                        (midi_ports_handler().await);
+                    }
                     h2 { "MIDI sources" }
                     form
                         hx-post="/midi/add"
@@ -169,7 +176,7 @@ async fn index_handler(
                         button { "Upload" }
                     }
                     div id="midi-sources-list" {
-                        (midi_sources_render((*midi_sources).clone()).await)
+                        (midi_sources_render((*midi_sources).clone()).await);
                     }
                 }
             }
@@ -181,35 +188,27 @@ async fn health_handler() -> &'static str {
     "Hi"
 }
 
-async fn version_handler() -> impl IntoResponse {
-    #[derive(serde::Serialize)]
-    struct VersionInfo {
-        version: &'static str,
-        commit: &'static str,
-        dirty: bool,
+async fn version_handler() -> Markup {
+    html! {
+        (format!("Version: {}+{}", env!("CARGO_PKG_VERSION"), env!("GIT_INFO")));
     }
-    let info: Vec<&str> = env!("GIT_INFO").split('_').collect();
-    let (commit, dirty) = if info.len() == 2 {
-        (info[1], true)
-    } else {
-        (info[0], false)
-    };
-    Json(VersionInfo {
-        version: env!("CARGO_PKG_VERSION"),
-        commit,
-        dirty,
-    })
 }
 
-async fn midi_ports_handler() -> Json<Vec<String>> {
+async fn midi_ports_handler() -> Markup {
     let out = MidiOutput::new("harmonia").unwrap();
 
-    Json(
-        out.ports()
+    let ports = out.ports();
+    let ports = ports
             .iter()
-            .filter_map(|port| Result::ok(out.port_name(port)))
-            .collect(),
-    )
+            .filter_map(|port| Result::ok(out.port_name(port)));
+
+    html! {
+        ol {
+            @for port_name in ports {
+                li { (port_name) }
+            }
+        }
+    }
 }
 
 // use axum::debug_handler;
