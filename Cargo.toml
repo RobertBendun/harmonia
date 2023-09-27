@@ -8,6 +8,7 @@ build = "src/build.rs"
 axum = { version = "0.6.20", features = ["ws", "headers", "multipart", "macros"] }
 base64ct = { version = "1.6.0", features = ["std"] }
 headers = "0.3.9"
+hex = "0.4.3"
 maud = { version = "0.25.0", features = ["axum"] }
 midir = "0.9.1"
 midly = "0.5.3"

@@ -13,7 +13,7 @@ use axum::{
     },
     response::IntoResponse,
     routing::{get, post},
-    Json, Router, TypedHeader,
+    Router, TypedHeader,
 };
 use midir::{MidiOutput, MidiOutputPort};
 use midly::SmfBytemap;
@@ -28,12 +28,10 @@ use maud::{html, Markup, DOCTYPE};
 
 use sha1::{Sha1, Digest};
 
-use base64ct::{Base64, Encoding};
-
 struct MidiSource {
     bytes: Vec<u8>,
-    #[allow(dead_code)]
     file_name: String,
+    associated_port: usize,
 }
 
 impl MidiSource {
@@ -106,7 +104,7 @@ async fn main() {
         .route("/api/health", get(health_handler))
         .route("/api/ws", get(websocket_handler))
         .route("/midi/add", post(midi_add_handler))
-        .route("/api/midi/play/:uuid", post(midi_play_handler))
+        .route("/midi/play/:uuid", post(midi_play_handler))
         .route("/midi/ports", get(midi_ports_handler))
         .route("/version", get(version_handler))
         .route("/", get(index_handler))
@@ -142,25 +140,50 @@ async fn midi_sources_render(
     let midi_sources = app_state.sources.read().unwrap();
 
     html! {
-        @for (uuid, source) in midi_sources.iter() {
-            div data-uuid=(uuid) {
-                h3 { (source.file_name) }
-                @match source.midi() {
-                    Ok(midi) => p {
-                        "Format: ";
-                        ({
-                            match midi.header.format {
-                                midly::Format::Sequential | midly::Format::SingleTrack => "sequential",
-                                midly::Format::Parallel => "parallel",
+        table {
+            thead {
+                th { "Filename" }
+                th { "Info" }
+                th { "Associated port" }
+                th { "Keybind" }
+                th { "Controls" }
+            }
+            tbody {
+                @for (uuid, source) in midi_sources.iter() {
+                    tr data-uuid=(uuid) {
+                        td { (source.file_name) }
+                        @match source.midi() {
+                            Ok(midi) => td {
+                                "Format: ";
+                                ({
+                                    match midi.header.format {
+                                        midly::Format::Sequential | midly::Format::SingleTrack => "sequential",
+                                        midly::Format::Parallel => "parallel",
+                                    }
+                                });
+                                ", tracks count: ";
+                                (midi.tracks.len());
+                            },
+                            Err(err) => td {
+                                "Failed to parse MIDI file: ";
+                                (err);
+                            },
+                        }
+                        td {
+                            input
+                                type="number" value=(source.associated_port)
+                                hx-post=(format!("/midi/set-port/{uuid}/"));
+                        }
+                        td {
+                            input
+                                type="text";
+                        }
+                        td {
+                            button hx-post=(format!("/midi/play/{uuid}")) {
+                                "▶"
                             }
-                        });
-                        ", tracks count: ";
-                        (midi.tracks.len());
-                    },
-                    Err(err) => p {
-                        "Failed to parse MIDI file: ";
-                        (err);
-                    },
+                        }
+                    }
                 }
             }
         }
@@ -246,23 +269,22 @@ async fn midi_ports_handler(
     }
 }
 
-// use axum::debug_handler;
-// #[debug_handler]
 async fn midi_play_handler(
     State(app_state): State<Arc<AppState>>,
     Path(uuid): Path<String>,
-) -> Json<()> {
+) {
     let midi_sources = app_state.sources.read().unwrap();
     let Some(midi_source) = midi_sources.get(&uuid) else {
-        println!("not found");
-        return Json(());
+        error!("{uuid} not found");
+        return;
     };
     let midi = midi_source.midi().unwrap();
 
     let midi_out = MidiOutput::new("harmonia").unwrap();
+    // TODO: Use associated port
     let midi_port = &midi_out.ports()[0];
     info!(
-        "connected to output port: {}",
+        "outputing to output port: {}",
         midi_out.port_name(midi_port).unwrap()
     );
     let mut conn_out = midi_out
@@ -285,7 +307,7 @@ async fn midi_play_handler(
         }
     }
 
-    Json(())
+    // TODO: Output status, maybe render to separate div
 }
 
 async fn midi_add_handler(
@@ -300,11 +322,12 @@ async fn midi_add_handler(
         let data = field.bytes().await.unwrap().to_vec();
         let mut hasher = Sha1::new();
         hasher.update(&data);
-        let uuid = Base64::encode_string(&hasher.finalize());
+        let uuid = hex::encode(&hasher.finalize());
 
         let midi_source = MidiSource {
             bytes: data,
             file_name: file_name.clone(),
+            associated_port: 1,
         };
 
         let midi_sources = &mut app_state.sources.write().unwrap();
