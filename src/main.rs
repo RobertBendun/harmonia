@@ -9,13 +9,13 @@ use std::{
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        ConnectInfo, Multipart, Path, WebSocketUpgrade,
+        ConnectInfo, Multipart, Path, WebSocketUpgrade, State,
     },
     response::IntoResponse,
     routing::{get, post},
-    Extension, Json, Router, TypedHeader,
+    Json, Router, TypedHeader,
 };
-use midir::MidiOutput;
+use midir::{MidiOutput, MidiOutputPort};
 use midly::SmfBytemap;
 use tower_http::{
     services::ServeDir,
@@ -47,6 +47,37 @@ impl MidiSource {
 
 type MidiSources = HashMap<String, MidiSource>;
 
+struct MidiConnection {
+    ports: Vec<MidiOutputPort>,
+}
+
+impl Default for MidiConnection {
+    fn default() -> Self {
+        // TODO: Is it valid to create a new MidiOutput per use? Maybe we should create only one
+        // MidiOutput port per application.
+        let out = MidiOutput::new("harmonia").unwrap();
+
+        Self {
+            ports: out.ports(),
+        }
+    }
+}
+
+impl MidiConnection {
+    fn refresh(&mut self) {
+        // TODO: Is it valid to create a new MidiOutput per use? Maybe we should create only one
+        // MidiOutput port per application.
+        let out = MidiOutput::new("harmonia").unwrap();
+        self.ports = out.ports();
+    }
+}
+
+#[derive(Default)]
+struct AppState {
+    sources: RwLock<MidiSources>,
+    connection: RwLock<MidiConnection>,
+}
+
 #[tokio::main]
 async fn main() {
     let do_help = std::env::args().any(|param| &param == "--help" || &param == "-h");
@@ -56,7 +87,7 @@ async fn main() {
         help_and_exit();
     }
 
-    let midi_sources = Arc::new(RwLock::new(MidiSources::default()));
+    let app_state = Arc::new(AppState::default());
 
     tracing_subscriber::registry()
         .with(
@@ -83,7 +114,7 @@ async fn main() {
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         )
-        .layer(Extension(midi_sources));
+        .with_state(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     info!("listening on http://{addr}");
@@ -106,9 +137,9 @@ fn help_and_exit() -> ! {
 }
 
 async fn midi_sources_render(
-    midi_sources: Arc<RwLock<MidiSources>>,
+    app_state: State<Arc<AppState>>,
 ) -> Markup {
-    let midi_sources = midi_sources.read().unwrap();
+    let midi_sources = app_state.sources.read().unwrap();
 
     html! {
         @for (uuid, source) in midi_sources.iter() {
@@ -137,7 +168,7 @@ async fn midi_sources_render(
 }
 
 async fn index_handler(
-    midi_sources: Extension<Arc<RwLock<MidiSources>>>,
+    app_state: State<Arc<AppState>>,
 ) -> Markup {
     html! {
         (DOCTYPE)
@@ -163,7 +194,7 @@ async fn index_handler(
                         "Refresh"
                     }
                     div id="midi-ports" {
-                        (midi_ports_handler().await);
+                        (midi_ports_handler(app_state.clone()).await);
                     }
                     h2 { "MIDI sources" }
                     form
@@ -176,7 +207,7 @@ async fn index_handler(
                         button { "Upload" }
                     }
                     div id="midi-sources-list" {
-                        (midi_sources_render((*midi_sources).clone()).await);
+                        (midi_sources_render(app_state).await);
                     }
                 }
             }
@@ -194,11 +225,15 @@ async fn version_handler() -> Markup {
     }
 }
 
-async fn midi_ports_handler() -> Markup {
+async fn midi_ports_handler(
+    State(app_state): State<Arc<AppState>>,
+) -> Markup {
     let out = MidiOutput::new("harmonia").unwrap();
 
-    let ports = out.ports();
-    let ports = ports
+    let mut midi_conn = app_state.connection.write().unwrap();
+    midi_conn.refresh();
+
+    let ports = midi_conn.ports
             .iter()
             .filter_map(|port| Result::ok(out.port_name(port)));
 
@@ -214,10 +249,10 @@ async fn midi_ports_handler() -> Markup {
 // use axum::debug_handler;
 // #[debug_handler]
 async fn midi_play_handler(
-    midi_sources: Extension<Arc<RwLock<MidiSources>>>,
+    State(app_state): State<Arc<AppState>>,
     Path(uuid): Path<String>,
 ) -> Json<()> {
-    let midi_sources = midi_sources.read().unwrap();
+    let midi_sources = app_state.sources.read().unwrap();
     let Some(midi_source) = midi_sources.get(&uuid) else {
         println!("not found");
         return Json(());
@@ -254,7 +289,7 @@ async fn midi_play_handler(
 }
 
 async fn midi_add_handler(
-    midi_sources: Extension<Arc<RwLock<MidiSources>>>,
+    State(app_state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Markup {
     while let Some(field) = multipart.next_field().await.unwrap() {
@@ -272,11 +307,11 @@ async fn midi_add_handler(
             file_name: file_name.clone(),
         };
 
-        let midi_sources = &mut midi_sources.write().unwrap();
+        let midi_sources = &mut app_state.sources.write().unwrap();
         midi_sources.insert(uuid, midi_source);
     }
 
-    midi_sources_render((*midi_sources).clone()).await
+    midi_sources_render(axum::extract::State(app_state)).await
 }
 
 // For expanding this websocket buisness see: https://github.com/tokio-rs/axum/blob/main/examples/websockets/src/main.rs
