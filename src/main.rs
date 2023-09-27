@@ -7,14 +7,20 @@ use std::{
 };
 
 use axum::{
+    body::{Bytes, Full},
     extract::{
         ws::{Message, WebSocket},
-        ConnectInfo, Multipart, Path, WebSocketUpgrade, State,
+        ConnectInfo, Multipart, Path, State, WebSocketUpgrade,
+    },
+    http::{
+        header::{CONTENT_DISPOSITION, CONTENT_TYPE},
+        Response, StatusCode,
     },
     response::IntoResponse,
     routing::{get, post},
     Router, TypedHeader,
 };
+
 use midir::{MidiOutput, MidiOutputPort};
 use midly::SmfBytemap;
 use tower_http::{
@@ -26,7 +32,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use maud::{html, Markup, DOCTYPE};
 
-use sha1::{Sha1, Digest};
+use sha1::{Digest, Sha1};
 
 struct MidiSource {
     bytes: Vec<u8>,
@@ -55,9 +61,7 @@ impl Default for MidiConnection {
         // MidiOutput port per application.
         let out = MidiOutput::new("harmonia").unwrap();
 
-        Self {
-            ports: out.ports(),
-        }
+        Self { ports: out.ports() }
     }
 }
 
@@ -106,6 +110,7 @@ async fn main() {
         .route("/midi/add", post(midi_add_handler))
         .route("/midi/play/:uuid", post(midi_play_handler))
         .route("/midi/ports", get(midi_ports_handler))
+        .route("/midi/download/:uuid", get(midi_download_handler))
         .route("/version", get(version_handler))
         .route("/", get(index_handler))
         .layer(
@@ -134,9 +139,33 @@ fn help_and_exit() -> ! {
     std::process::exit(0);
 }
 
-async fn midi_sources_render(
+#[axum::debug_handler]
+async fn midi_download_handler(
     app_state: State<Arc<AppState>>,
-) -> Markup {
+    Path(uuid): Path<String>,
+) -> Response<Full<Bytes>> {
+    let midi_sources = app_state.sources.read().unwrap();
+    let Some(midi_source) = midi_sources.get(&uuid) else {
+        error!("{uuid} not found");
+        let mut response = Response::new(Full::from("not found"));
+        *response.status_mut() = StatusCode::NOT_FOUND;
+        response.headers_mut().insert(CONTENT_TYPE, "text/html".parse().unwrap());
+        return response;
+    };
+
+    let mut response = Response::new(Full::from(midi_source.bytes.clone()));
+    let headers = &mut response.headers_mut();
+    headers.insert(
+        CONTENT_DISPOSITION,
+        format!("attachement; filename=\"{}\"", midi_source.file_name)
+            .parse()
+            .unwrap(),
+    );
+    headers.insert(CONTENT_TYPE, "audio/midi".parse().unwrap());
+    response
+}
+
+async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
     let midi_sources = app_state.sources.read().unwrap();
 
     html! {
@@ -151,7 +180,11 @@ async fn midi_sources_render(
             tbody {
                 @for (uuid, source) in midi_sources.iter() {
                     tr data-uuid=(uuid) {
-                        td { (source.file_name) }
+                        td {
+                            a href=(format!("/midi/download/{uuid}")) {
+                                (source.file_name)
+                            }
+                        }
                         @match source.midi() {
                             Ok(midi) => td {
                                 "Format: ";
@@ -190,9 +223,7 @@ async fn midi_sources_render(
     }
 }
 
-async fn index_handler(
-    app_state: State<Arc<AppState>>,
-) -> Markup {
+async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
     html! {
         (DOCTYPE)
         html lang="en" {
@@ -248,17 +279,16 @@ async fn version_handler() -> Markup {
     }
 }
 
-async fn midi_ports_handler(
-    State(app_state): State<Arc<AppState>>,
-) -> Markup {
+async fn midi_ports_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     let out = MidiOutput::new("harmonia").unwrap();
 
     let mut midi_conn = app_state.connection.write().unwrap();
     midi_conn.refresh();
 
-    let ports = midi_conn.ports
-            .iter()
-            .filter_map(|port| Result::ok(out.port_name(port)));
+    let ports = midi_conn
+        .ports
+        .iter()
+        .filter_map(|port| Result::ok(out.port_name(port)));
 
     html! {
         ol {
@@ -269,10 +299,7 @@ async fn midi_ports_handler(
     }
 }
 
-async fn midi_play_handler(
-    State(app_state): State<Arc<AppState>>,
-    Path(uuid): Path<String>,
-) {
+async fn midi_play_handler(State(app_state): State<Arc<AppState>>, Path(uuid): Path<String>) {
     let midi_sources = app_state.sources.read().unwrap();
     let Some(midi_source) = midi_sources.get(&uuid) else {
         error!("{uuid} not found");
@@ -322,7 +349,7 @@ async fn midi_add_handler(
         let data = field.bytes().await.unwrap().to_vec();
         let mut hasher = Sha1::new();
         hasher.update(&data);
-        let uuid = hex::encode(&hasher.finalize());
+        let uuid = hex::encode(hasher.finalize());
 
         let midi_source = MidiSource {
             bytes: data,
