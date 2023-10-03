@@ -23,6 +23,7 @@ use axum::{
 
 use midir::{MidiOutput, MidiOutputPort};
 use midly::SmfBytemap;
+use rusty_link::{AblLink, SessionState};
 use tower_http::{
     services::ServeDir,
     trace::{DefaultMakeSpan, TraceLayer},
@@ -74,10 +75,20 @@ impl MidiConnection {
     }
 }
 
-#[derive(Default)]
 struct AppState {
     sources: RwLock<MidiSources>,
     connection: RwLock<MidiConnection>,
+    link: AblLink,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            sources: Default::default(),
+            connection: Default::default(),
+            link: AblLink::new(120.),
+        }
+    }
 }
 
 #[tokio::main]
@@ -89,8 +100,6 @@ async fn main() {
         help_and_exit();
     }
 
-    let app_state = Arc::new(AppState::default());
-
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -101,12 +110,18 @@ async fn main() {
 
     info!("starting up commit {}", env!("GIT_INFO"));
 
+    let app_state = Arc::new(AppState::default());
+    info!("link enabled");
+    app_state.link.enable(true);
+
+
     let public_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
 
     let app = Router::new()
         .fallback_service(ServeDir::new(public_dir))
         .route("/api/health", get(health_handler))
-        .route("/api/ws", get(websocket_handler))
+        .route("/api/link-status-websocket", get(link_status_websocket_handler))
+        .route("/link/status", get(link_status_handler))
         .route("/midi/add", post(midi_add_handler))
         .route("/midi/play/:uuid", post(midi_play_handler))
         .route("/midi/ports", get(midi_ports_handler))
@@ -117,7 +132,7 @@ async fn main() {
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         )
-        .with_state(app_state);
+        .with_state(app_state.clone());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     info!("listening on http://{addr}");
@@ -130,6 +145,8 @@ async fn main() {
     }
 
     server.await.unwrap();
+
+    app_state.link.enable(false);
 }
 
 fn help_and_exit() -> ! {
@@ -139,7 +156,25 @@ fn help_and_exit() -> ! {
     std::process::exit(0);
 }
 
-#[axum::debug_handler]
+async fn link_status_handler(
+    State(app_state): State<Arc<AppState>>
+) -> Markup {
+    let mut session_state = SessionState::default();
+    app_state.link.capture_app_session_state(&mut session_state);
+    let time = app_state.link.clock_micros();
+
+    // TODO: Move quantum to state
+    let quantum = 4.0;
+
+    let beat = session_state.beat_at_time(time, quantum);
+
+    html! {
+        "BPM: ";    (session_state.tempo());
+        ", beat: "; (beat);
+        ", playing: "; (session_state.is_playing());
+    }
+}
+
 async fn midi_download_handler(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
@@ -254,6 +289,10 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     (version_handler().await);
                 }
                 main {
+                    h2 { "Link status" }
+                    div id="link-status" {
+                        (link_status_handler(app_state.clone()).await)
+                    }
                     h2 { "MIDI ports" }
                     button hx-get="/midi/ports" hx-target="#midi-ports" hx-swap="innerHTML" {
                         "Refresh"
@@ -376,10 +415,11 @@ async fn midi_add_handler(
 }
 
 // For expanding this websocket buisness see: https://github.com/tokio-rs/axum/blob/main/examples/websockets/src/main.rs
-async fn websocket_handler(
+async fn link_status_websocket_handler(
     ws: WebSocketUpgrade,
     user_agent: Option<TypedHeader<headers::UserAgent>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    app_state: State<Arc<AppState>>
 ) -> impl IntoResponse {
     let user_agent = if let Some(TypedHeader(user_agent)) = user_agent {
         user_agent.to_string()
@@ -387,33 +427,18 @@ async fn websocket_handler(
         "unknown user agent".to_string()
     };
     info!("websocket connect: addr={addr}, user_agent={user_agent}");
-    ws.on_upgrade(move |socket| handle_socket(socket, addr))
+    ws.on_upgrade(move |socket| link_status_websocket_loop(socket, addr, app_state))
 }
 
-async fn handle_socket(mut socket: WebSocket, addr: SocketAddr) {
-    if socket
-        .send(Message::Text("hello, world".to_string()))
-        .await
-        .is_ok()
-    {
-        info!("websocket send to {addr} message: ");
-    } else {
-        return;
-    }
-
-    while let Some(msg) = socket.recv().await {
-        let msg = match msg {
-            Ok(msg) => msg,
-            Err(err) => {
-                error!("failed to receive: {err}");
-                continue;
-            }
-        };
-        match msg {
-            Message::Text(msg) => println!("Received message: {msg}"),
-            Message::Binary(bin) => println!("Binary message of length: {}", bin.len()),
-            Message::Close(_) => return,
-            Message::Ping(_) | Message::Pong(_) => {}
+async fn link_status_websocket_loop(mut socket: WebSocket, addr: SocketAddr, app_state: State<Arc<AppState>>) {
+    loop {
+        let markup = link_status_handler(app_state.clone()).await;
+        if let Err(err) = socket.send(Message::Text(markup.into_string())).await {
+            error!("websocket send to {addr} failed: {err}");
+            break;
         }
+        // TODO: Sleep should be based on BPM to keep in sync with clock as good as possible
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let _ = socket.close().await;
 }

@@ -1,21 +1,27 @@
 /** @type{HTMLDivElement} */
 let midi_sources_div = null;
 
-document.addEventListener('DOMContentLoaded', () => {
-	init_health_check();
+document.addEventListener('DOMContentLoaded', async () => {
+	await Promise.all([
+		init_health_check(),
+		init_websocket(),
+	]);
 });
 
 function delay(miliseconds) {
 	return new Promise(resolve => setTimeout(resolve, miliseconds));
 }
 
+// TODO: Is this needed when we have constant communication using Websockets?
+//       This is probably just unnessesary noise (and traffic).
+//       Websocket restart logic should handle this status rendering
 async function init_health_check() {
 	/** @type{HTMLSpanElement} */
 	const app_health_span = document.getElementById('app-health');
 	for (;;) {
 		await delay(500);
 
-		let healthy = true;
+		let healthy;
 		try {
 			const response = await fetch('/api/health');
 			const text = await response.text();
@@ -38,19 +44,28 @@ async function init_health_check() {
 	}
 }
 
-// Create WebSocket connection.
-const socket = new WebSocket(`ws://${location.host}/api/ws`);
+/**
+	* @param {WebSocket} socket
+	*/
+function socket_closed(socket) {
+	return new Promise(resolve => socket.addEventListener('close', resolve));
+}
 
-socket.addEventListener("open", (event) => {
-	console.log("open", event);
-});
+async function init_websocket() {
+	const link_status_div = document.getElementById("link-status");
 
-socket.addEventListener("message", (event) => {
-	console.log("message", event);
-	socket.send("your message was: " + event.data);
-});
+	for (;;) {
+		const socket = new WebSocket(`ws://${location.host}/api/link-status-websocket`);
+		socket.addEventListener("open", () => {
+			console.log("successfully initialized connection with link status websocket");
+		});
 
-socket.addEventListener("close", (event) => {
-	console.log("close", event);
-});
+		socket.addEventListener("message", (event) => {
+			link_status_div.innerHTML = event.data;
+		});
 
+		await socket_closed(socket);
+		console.error("Connection was closed, trying to reconnect after 0.5s");
+		await delay(300);
+	}
+}
