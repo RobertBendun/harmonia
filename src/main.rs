@@ -230,11 +230,22 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
             (DOCTYPE)
             head {
                 meta charset="utf-8";
+                meta name="viewport" content="width=device-width, initial-scale=1";
                 title { "Harmonia control panel" }
                 script src="index.js" {}
                 script src="htmx.min.js" {}
             }
             body {
+                noscript {
+                    div style="font-weight: bold; color: red; font-size: 1.1em; max-width: 800px; margin: 1em auto 1em auto" {
+                        "This is a web application, and thus requires JavaScript to work. But fear not!
+                         This code is a free software (AGPL 3+) with at least open source dependencies:";
+                        ul {
+                            li { a href="https://github.com/RobertBendun/harmonia" { "harmonia" }  " - app that you are seeing now"; }
+                            li { a href="https://htmx.org/" { "htmx" } }
+                        }
+                    }
+                }
                 header {
                     h1 { "Harmonia control panel" }
                     "Status: "
