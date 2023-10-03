@@ -10,7 +10,7 @@ Harmonia is an interface for playing synchronized MIDI using [Ableton/Link](http
 - [x] MIDI upload
 - [x] MIDI source download
 - [x] Health check
-- [ ] List IPs (and maybe local names) listing
+- [x] List IPs (and maybe local names) listing
 - [ ] MIDI play subsystem with Ableton/Link
 - [ ] Server state save & restore - doesn't require user to provide all files every time
 - [ ] Name association (like nick) with harmonia instance

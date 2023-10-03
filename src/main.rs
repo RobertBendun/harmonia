@@ -95,6 +95,7 @@ impl Default for AppState {
 async fn main() {
     let do_help = std::env::args().any(|param| &param == "--help" || &param == "-h");
     let do_open = std::env::args().any(|param| &param == "--open");
+    let disable_link = std::env::args().any(|param| &param == "--disable-link");
 
     if do_help {
         help_and_exit();
@@ -111,8 +112,8 @@ async fn main() {
     info!("starting up commit {}", env!("GIT_INFO"));
 
     let app_state = Arc::new(AppState::default());
-    info!("link enabled");
-    app_state.link.enable(true);
+    app_state.link.enable(!disable_link);
+    info!("link {}", if disable_link { "not active" } else { "active" });
 
 
     let public_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
@@ -154,6 +155,40 @@ fn help_and_exit() -> ! {
     println!("  --open - opens UI in default browser");
     println!("  --help - prints this message");
     std::process::exit(0);
+}
+
+async fn local_ips_handler() -> Markup {
+    let mut interfaces = match local_ip_address::list_afinet_netifas() {
+        Ok(list) => list,
+        Err(err) => {
+            error!("failed to retrive local ips: {err}");
+            return html! {
+                p {
+                    "failed to retrive local ips"
+                }
+            }
+        },
+    };
+
+    interfaces.sort_by(|(if1, _), (if2, _)| if1.cmp(if2));
+
+    html! {
+        details {
+            summary {
+                "Local IP addresses"
+            }
+
+            ul {
+                @for (iface, ip) in interfaces {
+                    @if !ip.is_loopback() {
+                        li {
+                            (format!("{iface} - {ip}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn link_status_handler(
@@ -293,7 +328,9 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     div id="link-status" {
                         (link_status_handler(app_state.clone()).await)
                     }
-                    h2 { "MIDI ports" }
+                    h2 { "System information" }
+                    (local_ips_handler().await);
+                    h3 { "MIDI ports" }
                     button hx-get="/midi/ports" hx-target="#midi-ports" hx-swap="innerHTML" {
                         "Refresh"
                     }
