@@ -21,15 +21,14 @@ async function init_health_check() {
 	for (;;) {
 		await delay(500);
 
-		let healthy;
 		try {
 			const timeout = 100;
 			const abort = new AbortController();
 			const timeout_id = setTimeout(() => abort.abort(), timeout);
 
 			const response = await fetch('/api/health', { signal: abort.signal });
-			const text = await response.text();
 			clearTimeout(timeout_id);
+			const text = await response.text();
 			if (text != "Hi") { throw new Error(`expected health check to return "Hi", but it returned: "${text}"`); }
 
 			if (app_health_span.innerText != "connected") {

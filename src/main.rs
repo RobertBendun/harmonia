@@ -2,7 +2,9 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+    },
     time::Duration,
 };
 
@@ -28,32 +30,32 @@ use tower_http::{
     services::ServeDir,
     trace::{DefaultMakeSpan, TraceLayer},
 };
-use tracing::{error, info, instrument};
+use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use maud::{html, Markup, DOCTYPE};
 
 use sha1::{Digest, Sha1};
 
-struct MidiSource {
-    bytes: Vec<u8>,
-    file_name: String,
-    associated_port: usize,
+mod audio_engine;
+use audio_engine::AudioEngine;
+
+pub struct MidiSource {
+    pub bytes: Vec<u8>,
+    pub file_name: String,
+    pub associated_port: usize,
 }
 
 impl MidiSource {
-    fn midi(&self) -> Result<SmfBytemap<'_>, midly::Error> {
+    pub fn midi(&self) -> Result<SmfBytemap<'_>, midly::Error> {
         SmfBytemap::parse(&self.bytes)
     }
-
-    #[instrument]
-    fn play() {}
 }
 
 type MidiSources = HashMap<String, MidiSource>;
 
-struct MidiConnection {
-    ports: Vec<MidiOutputPort>,
+pub struct MidiConnection {
+    pub ports: Vec<MidiOutputPort>,
 }
 
 impl Default for MidiConnection {
@@ -67,7 +69,7 @@ impl Default for MidiConnection {
 }
 
 impl MidiConnection {
-    fn refresh(&mut self) {
+    pub fn refresh(&mut self) {
         // TODO: Is it valid to create a new MidiOutput per use? Maybe we should create only one
         // MidiOutput port per application.
         let out = MidiOutput::new("harmonia").unwrap();
@@ -75,18 +77,20 @@ impl MidiConnection {
     }
 }
 
-struct AppState {
-    sources: RwLock<MidiSources>,
-    connection: RwLock<MidiConnection>,
-    link: AblLink,
+pub struct AppState {
+    pub sources: RwLock<MidiSources>,
+    pub connection: RwLock<MidiConnection>,
+    pub link: AblLink,
+    pub audio_engine: RwLock<AudioEngine>,
 }
 
-impl Default for AppState {
-    fn default() -> Self {
+impl AppState {
+    fn new() -> Self {
         Self {
             sources: Default::default(),
             connection: Default::default(),
             link: AblLink::new(120.),
+            audio_engine: Default::default(),
         }
     }
 }
@@ -111,17 +115,23 @@ async fn main() {
 
     info!("starting up commit {}", env!("GIT_INFO"));
 
-    let app_state = Arc::new(AppState::default());
+    let app_state = Arc::new(AppState::new());
+    app_state.audio_engine.write().unwrap().state = Arc::downgrade(&app_state);
     app_state.link.enable(!disable_link);
-    info!("link {}", if disable_link { "not active" } else { "active" });
-
+    info!(
+        "link {}",
+        if disable_link { "not active" } else { "active" }
+    );
 
     let public_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
 
     let app = Router::new()
         .fallback_service(ServeDir::new(public_dir))
         .route("/api/health", get(health_handler))
-        .route("/api/link-status-websocket", get(link_status_websocket_handler))
+        .route(
+            "/api/link-status-websocket",
+            get(link_status_websocket_handler),
+        )
         .route("/link/status", get(link_status_handler))
         .route("/midi/add", post(midi_add_handler))
         .route("/midi/play/:uuid", post(midi_play_handler))
@@ -146,7 +156,6 @@ async fn main() {
     }
 
     server.await.unwrap();
-
     app_state.link.enable(false);
 }
 
@@ -166,8 +175,8 @@ async fn local_ips_handler() -> Markup {
                 p {
                     "failed to retrive local ips"
                 }
-            }
-        },
+            };
+        }
     };
 
     interfaces.sort_by(|(if1, _), (if2, _)| if1.cmp(if2));
@@ -191,9 +200,7 @@ async fn local_ips_handler() -> Markup {
     }
 }
 
-async fn link_status_handler(
-    State(app_state): State<Arc<AppState>>
-) -> Markup {
+async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     let mut session_state = SessionState::default();
     app_state.link.capture_app_session_state(&mut session_state);
     let time = app_state.link.clock_micros();
@@ -281,13 +288,25 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                             input
                                 type="text";
                         }
-                        td {
-                            button hx-post=(format!("/midi/play/{uuid}")) {
-                                "▶"
-                            }
+                        td hx-target="this" {
+                            (render_play_cell(uuid, false, None))
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+fn render_play_cell(uuid: &str, playing: bool, error_message: Option<String>) -> Markup {
+    html! {
+        button hx-post=(format!("/midi/play/{uuid}")) hx-swap="innerHTML" {
+            // https://en.wikipedia.org/wiki/Media_control_symbols
+            (if !playing || error_message.is_some() { "▶" } else { "⏹" })
+        }
+        @if let Some(error_message) = error_message {
+            div style="color: red" {
+                (error_message)
             }
         }
     }
@@ -386,42 +405,21 @@ async fn midi_ports_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     }
 }
 
-async fn midi_play_handler(State(app_state): State<Arc<AppState>>, Path(uuid): Path<String>) {
-    let midi_sources = app_state.sources.read().unwrap();
-    let Some(midi_source) = midi_sources.get(&uuid) else {
-        error!("{uuid} not found");
-        return;
-    };
-    let midi = midi_source.midi().unwrap();
-
-    let midi_out = MidiOutput::new("harmonia").unwrap();
-    // TODO: Use associated port
-    let midi_port = &midi_out.ports()[0];
-    info!(
-        "outputing to output port: {}",
-        midi_out.port_name(midi_port).unwrap()
-    );
-    let mut conn_out = midi_out
-        .connect(midi_port, /* TODO: Better name */ "play")
-        .unwrap();
-
-    for (bytes, event) in midi.tracks[0].iter() {
-        match event.kind {
-            midly::TrackEventKind::Midi {
-                channel: _,
-                message,
-            } => match message {
-                midly::MidiMessage::NoteOn { .. } | midly::MidiMessage::NoteOff { .. } => {
-                    conn_out.send(bytes).unwrap();
-                    std::thread::sleep(Duration::from_secs(1));
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-
-    // TODO: Output status, maybe render to separate div
+async fn midi_play_handler(
+    State(app_state): State<Arc<AppState>>,
+    Path(uuid): Path<String>,
+) -> Markup {
+    let started_playing = audio_engine::play(app_state.clone(), &uuid).await;
+    render_play_cell(
+        &uuid,
+        true,
+        if let Err(error_message) = started_playing {
+            error!("failed to play requested {uuid}: {error_message}");
+            Some(error_message)
+        } else {
+            None
+        },
+    )
 }
 
 async fn midi_add_handler(
@@ -456,7 +454,7 @@ async fn link_status_websocket_handler(
     ws: WebSocketUpgrade,
     user_agent: Option<TypedHeader<headers::UserAgent>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    app_state: State<Arc<AppState>>
+    app_state: State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let user_agent = if let Some(TypedHeader(user_agent)) = user_agent {
         user_agent.to_string()
@@ -467,7 +465,11 @@ async fn link_status_websocket_handler(
     ws.on_upgrade(move |socket| link_status_websocket_loop(socket, addr, app_state))
 }
 
-async fn link_status_websocket_loop(mut socket: WebSocket, addr: SocketAddr, app_state: State<Arc<AppState>>) {
+async fn link_status_websocket_loop(
+    mut socket: WebSocket,
+    addr: SocketAddr,
+    app_state: State<Arc<AppState>>,
+) {
     loop {
         let markup = link_status_handler(app_state.clone()).await;
         if let Err(err) = socket.send(Message::Text(markup.into_string())).await {
