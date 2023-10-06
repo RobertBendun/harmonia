@@ -23,20 +23,22 @@ async function init_health_check() {
 
 		let healthy;
 		try {
-			const response = await fetch('/api/health');
-			const text = await response.text();
-			healthy = text == "Hi";
-		} catch (err) {
-			healthy = false;
-		}
+			const timeout = 100;
+			const abort = new AbortController();
+			const timeout_id = setTimeout(() => abort.abort(), timeout);
 
-		if (healthy) {
+			const response = await fetch('/api/health', { signal: abort.signal });
+			const text = await response.text();
+			clearTimeout(timeout_id);
+			if (text != "Hi") { throw new Error(`expected health check to return "Hi", but it returned: "${text}"`); }
+
 			if (app_health_span.innerText != "connected") {
 				app_health_span.innerText = "connected";
 				app_health_span.style.color = "inherit";
 			}
-		} else {
+		} catch (err) {
 			if (app_health_span.innerText != "disconnected") {
+				console.error(err);
 				app_health_span.innerText = "disconnected";
 				app_health_span.style.color = "red";
 			}
