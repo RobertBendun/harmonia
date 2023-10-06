@@ -95,6 +95,18 @@ impl AppState {
     }
 }
 
+fn version() -> String {
+    format!("{pkg_version} ({hash} {date}{dirty})",
+        pkg_version = env!("CARGO_PKG_VERSION"),
+        hash = env!("GIT_STATUS_HASH"),
+        date = build_time::build_time_local!("%Y-%m-%d %H:%M:%S"),
+        dirty = {
+            let dirty = env!("GIT_STATUS_DIRTY");
+            if dirty == "dirty" { " dirty" } else { "" }
+        }
+    )
+}
+
 #[tokio::main]
 async fn main() {
     let do_help = std::env::args().any(|param| &param == "--help" || &param == "-h");
@@ -113,7 +125,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("starting up commit {}", env!("GIT_INFO"));
+    info!("starting up version {}", version());
 
     let app_state = Arc::new(AppState::new());
     app_state.audio_engine.write().unwrap().state = Arc::downgrade(&app_state);
@@ -381,7 +393,7 @@ async fn health_handler() -> &'static str {
 
 async fn version_handler() -> Markup {
     html! {
-        (format!("Version: {}+{}", env!("CARGO_PKG_VERSION"), env!("GIT_INFO")));
+        (format!("Version: {}", version()));
     }
 }
 

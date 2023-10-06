@@ -13,13 +13,13 @@ where
 }
 
 fn main() {
-    let git_hash = get_output("git", ["rev-parse", "HEAD"]).unwrap();
+    let git_hash = get_output("git", ["rev-parse", "--short", "HEAD"]).unwrap();
     let clean = get_output("git", ["status", "--untracked-files=no", "--porcelain"])
         .unwrap()
         .is_empty();
 
-    println!(
-        "cargo:rustc-env=GIT_INFO={dirty}{git_hash}",
-        dirty = if clean { "" } else { "DIRTY_" }
+    println!("cargo:rustc-env=GIT_STATUS_HASH={git_hash}");
+    println!("cargo:rustc-env=GIT_STATUS_DIRTY={dirty}",
+        dirty = if clean { "" } else { "dirty" }
     );
 }
