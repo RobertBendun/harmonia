@@ -2,9 +2,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     path::PathBuf,
-    sync::{
-        Arc, RwLock,
-    },
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
@@ -96,13 +94,18 @@ impl AppState {
 }
 
 fn version() -> String {
-    format!("{pkg_version} ({hash} {date}{dirty})",
+    format!(
+        "{pkg_version} ({hash} {date}{dirty})",
         pkg_version = env!("CARGO_PKG_VERSION"),
         hash = env!("GIT_STATUS_HASH"),
         date = build_time::build_time_local!("%Y-%m-%d %H:%M"),
         dirty = {
             let dirty = env!("GIT_STATUS_DIRTY");
-            if dirty == "dirty" { " dirty" } else { "" }
+            if dirty == "dirty" {
+                " dirty"
+            } else {
+                ""
+            }
         }
     )
 }

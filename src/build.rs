@@ -19,7 +19,8 @@ fn main() {
         .is_empty();
 
     println!("cargo:rustc-env=GIT_STATUS_HASH={git_hash}");
-    println!("cargo:rustc-env=GIT_STATUS_DIRTY={dirty}",
+    println!(
+        "cargo:rustc-env=GIT_STATUS_DIRTY={dirty}",
         dirty = if clean { "" } else { "dirty" }
     );
 }
