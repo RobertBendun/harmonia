@@ -19,7 +19,7 @@ use axum::{
         Response, StatusCode,
     },
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post, put},
     Router, TypedHeader,
 };
 
@@ -187,10 +187,12 @@ async fn main() {
             get(link_status_websocket_handler),
         )
         .route("/link/status", get(link_status_handler))
-        .route("/midi/add", post(midi_add_handler))
+        .route("/midi/:uuid", delete(midi_delete_handler))
+        .route("/midi", put(midi_put_handler))
+        .route("/midi/", put(midi_put_handler))
+        .route("/midi/:uuid", get(midi_get_handler))
         .route("/midi/play/:uuid", post(midi_play_handler))
         .route("/midi/ports", get(midi_ports_handler))
-        .route("/midi/download/:uuid", get(midi_download_handler))
         .route("/version", get(version_handler))
         .route("/", get(index_handler))
         .layer(
@@ -271,7 +273,7 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     }
 }
 
-async fn midi_download_handler(
+async fn midi_get_handler(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
 ) -> Response<Full<Bytes>> {
@@ -296,6 +298,15 @@ async fn midi_download_handler(
     response
 }
 
+async fn midi_delete_handler(app_state: State<Arc<AppState>>, Path(uuid): Path<String>) -> Markup {
+    {
+        let mut sources = app_state.sources.write().unwrap();
+        sources.remove(&uuid);
+    }
+
+    midi_sources_render(app_state).await
+}
+
 async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
     let midi_sources = app_state.sources.read().unwrap();
 
@@ -312,7 +323,7 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                 @for (uuid, source) in midi_sources.iter() {
                     tr data-uuid=(uuid) {
                         td {
-                            a href=(format!("/midi/download/{uuid}")) {
+                            a href=(format!("/midi/{uuid}")) {
                                 (source.file_name)
                             }
                         }
@@ -343,7 +354,14 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                                 type="text";
                         }
                         td hx-target="this" {
-                            (render_play_cell(uuid, false, None))
+                            (render_play_cell(uuid, false, None));
+                            button
+                                hx-delete=(format!("/midi/{uuid}"))
+                                hx-target="#midi-sources-list"
+                                hx-swap="innerHTML"
+                            {
+                                "delete"
+                            }
                         }
                     }
                 }
@@ -412,7 +430,7 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     }
                     h2 { "MIDI sources" }
                     form
-                        hx-post="/midi/add"
+                        hx-put="/midi"
                         hx-target="#midi-sources-list"
                         hx-swap="innerHTML"
                         hx-encoding="multipart/form-data"
@@ -477,7 +495,7 @@ async fn midi_play_handler(
     )
 }
 
-async fn midi_add_handler(
+async fn midi_put_handler(
     State(app_state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Markup {
