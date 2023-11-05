@@ -179,6 +179,9 @@ async fn main() {
 
     let public_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
 
+    // Conventions:
+    //   Paths begining with /api/ are meant for JavaScript
+    //   Others are for HTML / HTMLX consumption
     let app = Router::new()
         .fallback_service(ServeDir::new(public_dir))
         .route("/api/health", get(health_handler))
@@ -187,12 +190,12 @@ async fn main() {
             get(link_status_websocket_handler),
         )
         .route("/link/status", get(link_status_handler))
-        .route("/midi/:uuid", delete(midi_delete_handler))
-        .route("/midi", put(midi_put_handler))
-        .route("/midi/", put(midi_put_handler))
-        .route("/midi/:uuid", get(midi_get_handler))
-        .route("/midi/play/:uuid", post(midi_play_handler))
-        .route("/midi/ports", get(midi_ports_handler))
+        .route("/midi", put(midi_add_new_source_handler))
+        .route("/midi/", put(midi_add_new_source_handler))
+        .route("/midi/:uuid", delete(remove_midi_source_handler))
+        .route("/midi/:uuid", get(midi_download_source_handler))
+        .route("/midi/play/:uuid", post(midi_play_source_handler))
+        .route("/midi/ports", get(midi_list_ports_handler))
         .route("/version", get(version_handler))
         .route("/", get(index_handler))
         .layer(
@@ -273,7 +276,7 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     }
 }
 
-async fn midi_get_handler(
+async fn midi_download_source_handler(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
 ) -> Response<Full<Bytes>> {
@@ -298,7 +301,10 @@ async fn midi_get_handler(
     response
 }
 
-async fn midi_delete_handler(app_state: State<Arc<AppState>>, Path(uuid): Path<String>) -> Markup {
+async fn remove_midi_source_handler(
+    app_state: State<Arc<AppState>>,
+    Path(uuid): Path<String>,
+) -> Markup {
     {
         let mut sources = app_state.sources.write().unwrap();
         sources.remove(&uuid);
@@ -426,7 +432,7 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                         "Refresh"
                     }
                     div id="midi-ports" {
-                        (midi_ports_handler(app_state.clone()).await);
+                        (midi_list_ports_handler(app_state.clone()).await);
                     }
                     h2 { "MIDI sources" }
                     form
@@ -458,7 +464,7 @@ async fn version_handler() -> Markup {
     }
 }
 
-async fn midi_ports_handler(State(app_state): State<Arc<AppState>>) -> Markup {
+async fn midi_list_ports_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     let out = MidiOutput::new("harmonia").unwrap();
 
     let mut midi_conn = app_state.connection.write().unwrap();
@@ -478,7 +484,7 @@ async fn midi_ports_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     }
 }
 
-async fn midi_play_handler(
+async fn midi_play_source_handler(
     State(app_state): State<Arc<AppState>>,
     Path(uuid): Path<String>,
 ) -> Markup {
@@ -495,7 +501,7 @@ async fn midi_play_handler(
     )
 }
 
-async fn midi_put_handler(
+async fn midi_add_new_source_handler(
     State(app_state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Markup {
