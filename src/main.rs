@@ -40,6 +40,8 @@ use sha1::{Digest, Sha1};
 
 mod audio_engine;
 use audio_engine::AudioEngine;
+mod version;
+use version::Version;
 
 const STATE_PATH: &str = "harmonia_sources.bson";
 
@@ -123,23 +125,6 @@ impl AppState {
     }
 }
 
-fn version() -> String {
-    format!(
-        "{pkg_version} ({hash} {date}{dirty})",
-        pkg_version = env!("CARGO_PKG_VERSION"),
-        hash = env!("GIT_STATUS_HASH"),
-        date = build_time::build_time_local!("%Y-%m-%d %H:%M"),
-        dirty = {
-            let dirty = env!("GIT_STATUS_DIRTY");
-            if dirty == "dirty" {
-                " dirty"
-            } else {
-                ""
-            }
-        }
-    )
-}
-
 #[tokio::main]
 async fn main() {
     let do_help = std::env::args().any(|param| &param == "--help" || &param == "-h");
@@ -158,7 +143,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("starting up version {}", version());
+    info!("starting up version {}", Version {});
 
     let app_state = Arc::new(AppState::new());
     if let Err(err) = app_state.recollect_previous_sources(STATE_PATH) {
@@ -460,7 +445,8 @@ async fn health_handler() -> &'static str {
 
 async fn version_handler() -> Markup {
     html! {
-        (format!("Version: {}", version()));
+        "Version: ";
+        (Version{});
     }
 }
 

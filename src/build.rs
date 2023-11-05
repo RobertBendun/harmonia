@@ -14,10 +14,12 @@ where
 
 fn main() {
     let git_hash = get_output("git", ["rev-parse", "--short", "HEAD"]).unwrap();
+    let git_hash_full = get_output("git", ["rev-parse", "HEAD"]).unwrap();
     let clean = get_output("git", ["status", "--untracked-files=no", "--porcelain"])
         .unwrap()
         .is_empty();
 
+    println!("cargo:rustc-env=GIT_STATUS_FULL_HASH={git_hash_full}");
     println!("cargo:rustc-env=GIT_STATUS_HASH={git_hash}");
     println!(
         "cargo:rustc-env=GIT_STATUS_DIRTY={dirty}",
