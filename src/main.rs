@@ -1,11 +1,13 @@
 use std::{
     collections::HashMap,
+    io::BufReader,
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, RwLock},
     time::Duration,
 };
 
+use anyhow::Context;
 use axum::{
     body::{Bytes, Full},
     extract::{
@@ -24,11 +26,12 @@ use axum::{
 use midir::{MidiOutput, MidiOutputPort};
 use midly::SmfBytemap;
 use rusty_link::{AblLink, SessionState};
+use serde::{Deserialize, Serialize};
 use tower_http::{
     services::ServeDir,
     trace::{DefaultMakeSpan, TraceLayer},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use maud::{html, Markup, DOCTYPE};
@@ -38,6 +41,9 @@ use sha1::{Digest, Sha1};
 mod audio_engine;
 use audio_engine::AudioEngine;
 
+const STATE_PATH: &str = "harmonia_sources.bson";
+
+#[derive(Serialize, Deserialize)]
 pub struct MidiSource {
     pub bytes: Vec<u8>,
     pub file_name: String,
@@ -91,6 +97,30 @@ impl AppState {
             audio_engine: Default::default(),
         }
     }
+
+    fn recollect_previous_sources<P: AsRef<std::path::Path>>(
+        &self,
+        path: P,
+    ) -> Result<(), anyhow::Error> {
+        let file = std::fs::File::open(path).context("opening state file")?;
+
+        let new_sources: MidiSources =
+            bson::from_reader(BufReader::new(file)).context("reading bson file")?;
+        let mut sources = self.sources.write().unwrap();
+        sources.extend(new_sources);
+
+        Ok(())
+    }
+
+    fn remember_current_sources<P: AsRef<std::path::Path>>(
+        &self,
+        path: P,
+    ) -> Result<(), anyhow::Error> {
+        let sources = self.sources.read().unwrap();
+        std::fs::write(path, bson::to_vec(&*sources).context("sources to vec")?)
+            .context("saving sources to file")?;
+        Ok(())
+    }
 }
 
 fn version() -> String {
@@ -131,6 +161,15 @@ async fn main() {
     info!("starting up version {}", version());
 
     let app_state = Arc::new(AppState::new());
+    if let Err(err) = app_state.recollect_previous_sources(STATE_PATH) {
+        warn!("trying to recollect previous sources: {err:#}")
+    } else {
+        info!(
+            "recollected {count} sources",
+            count = app_state.sources.read().unwrap().len()
+        )
+    }
+
     app_state.audio_engine.write().unwrap().state = Arc::downgrade(&app_state);
     app_state.link.enable(!disable_link);
     info!(
@@ -390,6 +429,7 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
     }
 }
 
+#[tracing::instrument]
 async fn health_handler() -> &'static str {
     "Hi"
 }
@@ -459,6 +499,10 @@ async fn midi_add_handler(
 
         let midi_sources = &mut app_state.sources.write().unwrap();
         midi_sources.insert(uuid, midi_source);
+    }
+
+    if let Err(err) = app_state.remember_current_sources(STATE_PATH) {
+        error!("midi_add_handler failed to remember current sources: {err:#}")
     }
 
     midi_sources_render(axum::extract::State(app_state)).await

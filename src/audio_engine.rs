@@ -104,6 +104,8 @@ fn audio_engine_main(job: Job) -> Result<(), String> {
                 channel: _,
                 message,
             } => match message {
+                // TODO: Remember currenlty played notes so we can unwind this musical stack when
+                // we turn it off.
                 midly::MidiMessage::NoteOn { .. } | midly::MidiMessage::NoteOff { .. } => {
                     output.send(bytes).unwrap();
                 }
@@ -167,6 +169,7 @@ pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
         .connect(midi_port, /* TODO: Better name */ "play")
         .map_err(|err| format!("failed to connect to midi port: {err}"))?;
 
+    // TODO: This is wrong approach, we should select what will be played, not what to play now.
     app_state
         .audio_engine
         .write()
