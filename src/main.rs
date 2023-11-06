@@ -345,6 +345,9 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                         }
                         td {
                             input
+                                class="keybind"
+                                data-uuid=(uuid)
+                                onchange="update_key_binding(this)"
                                 type="text";
                         }
                         td hx-target="this" {

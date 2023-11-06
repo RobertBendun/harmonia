@@ -2,6 +2,14 @@
 let midi_sources_div = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
+	document.addEventListener('keyup', keyup);
+
+	// Sometimes when we update the page, browser preserve the state of inputs
+	// which allows us to keep keybindings from previous state of page
+	for (const input of document.querySelectorAll('input.keybind')) {
+		update_key_binding(input);
+	}
+
 	await init_websocket();
 });
 
@@ -47,5 +55,32 @@ async function init_websocket() {
 
 			await delay(300);
 		}
+	}
+}
+
+// TODO: When refreshing page previous value of keybind cell may stay,
+//       but we only notice when page changes. Also it should be preserved
+//       across the calls, so send this keybindings to server.
+const registered_key_bindings = {};
+
+/**
+	* @param {KeyboardEvent} input_element
+	*/
+function keyup(ev) {
+	if (ev.target.nodeName == "INPUT") {
+		return;
+	}
+
+	if (ev.key in registered_key_bindings) {
+		console.log('registered!!!!');
+	}
+}
+
+/**
+	* @param {HTMLInputElement} input_element
+	*/
+function update_key_binding(input_element) {
+	if (input_element.value.length > 0) {
+		registered_key_bindings[input_element.value.trim()] = 0;
 	}
 }
