@@ -169,7 +169,6 @@ async fn main() {
     //   Others are for HTML / HTMLX consumption
     let app = Router::new()
         .fallback_service(ServeDir::new(public_dir))
-        .route("/api/health", get(health_handler))
         .route(
             "/api/link-status-websocket",
             get(link_status_websocket_handler),
@@ -436,11 +435,6 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
             }
         }
     }
-}
-
-#[tracing::instrument]
-async fn health_handler() -> &'static str {
-    "Hi"
 }
 
 async fn version_handler() -> Markup {
