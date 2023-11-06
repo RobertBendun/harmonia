@@ -43,7 +43,7 @@ use audio_engine::AudioEngine;
 mod version;
 use version::Version;
 
-const STATE_PATH: &str = "harmonia_sources.bson";
+const STATE_PATH: &str = "harmonia_state.bson";
 
 #[derive(Serialize, Deserialize)]
 pub struct MidiSource {
@@ -90,6 +90,14 @@ pub struct AppState {
     pub audio_engine: RwLock<AudioEngine>,
 }
 
+fn cache_path() -> PathBuf {
+    let path = dirs::cache_dir()
+        .expect("documentation states that this function should work on all platforms")
+        .join("harmonia");
+    std::fs::create_dir_all(&path).unwrap();
+    path
+}
+
 impl AppState {
     fn new() -> Self {
         Self {
@@ -100,10 +108,8 @@ impl AppState {
         }
     }
 
-    fn recollect_previous_sources<P: AsRef<std::path::Path>>(
-        &self,
-        path: P,
-    ) -> Result<(), anyhow::Error> {
+    fn recollect_previous_sources(&self) -> Result<(), anyhow::Error> {
+        let path = cache_path().join(STATE_PATH);
         let file = std::fs::File::open(path).context("opening state file")?;
 
         let new_sources: MidiSources =
@@ -114,11 +120,9 @@ impl AppState {
         Ok(())
     }
 
-    fn remember_current_sources<P: AsRef<std::path::Path>>(
-        &self,
-        path: P,
-    ) -> Result<(), anyhow::Error> {
+    fn remember_current_sources(&self) -> Result<(), anyhow::Error> {
         let sources = self.sources.read().unwrap();
+        let path = cache_path().join(STATE_PATH);
         std::fs::write(path, bson::to_vec(&*sources).context("sources to vec")?)
             .context("saving sources to file")?;
         Ok(())
@@ -146,7 +150,7 @@ async fn main() {
     info!("starting up version {}", Version {});
 
     let app_state = Arc::new(AppState::new());
-    if let Err(err) = app_state.recollect_previous_sources(STATE_PATH) {
+    if let Err(err) = app_state.recollect_previous_sources() {
         warn!("trying to recollect previous sources: {err:#}")
     } else {
         info!(
@@ -403,6 +407,9 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     span id="app-health" {}
                     br;
                     (version_handler().await);
+                    br;
+                    "State cache: ";
+                    (cache_path().join(STATE_PATH).to_str().unwrap());
                 }
                 main {
                     h2 { "Link status" }
@@ -505,7 +512,7 @@ async fn midi_add_new_source_handler(
         midi_sources.insert(uuid, midi_source);
     }
 
-    if let Err(err) = app_state.remember_current_sources(STATE_PATH) {
+    if let Err(err) = app_state.remember_current_sources() {
         error!("midi_add_handler failed to remember current sources: {err:#}")
     }
 
