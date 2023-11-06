@@ -147,7 +147,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("starting up version {}", Version {});
+    info!("starting up version {}", Version::default());
 
     let app_state = Arc::new(AppState::new());
     if let Err(err) = app_state.recollect_previous_sources() {
@@ -450,7 +450,7 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
 async fn version_handler() -> Markup {
     html! {
         "Version: ";
-        (Version{});
+        (Version::default());
     }
 }
 
