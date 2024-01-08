@@ -124,6 +124,8 @@ fn audio_engine_main(job: Job) -> Result<(), String> {
         }
     }
 
+    *app_state.currently_playing_uuid.write().unwrap() = None;
+
     Ok(())
 }
 
@@ -168,6 +170,9 @@ pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
     let conn_out = midi_out
         .connect(midi_port, /* TODO: Better name */ "play")
         .map_err(|err| format!("failed to connect to midi port: {err}"))?;
+
+    let mut currently_playing = app_state.currently_playing_uuid.write().unwrap();
+    *currently_playing = Some(uuid.to_string());
 
     // TODO: This is wrong approach, we should select what will be played, not what to play now.
     app_state

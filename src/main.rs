@@ -88,6 +88,8 @@ pub struct AppState {
     pub connection: RwLock<MidiConnection>,
     pub link: AblLink,
     pub audio_engine: RwLock<AudioEngine>,
+    // TODO: Be better
+    pub currently_playing_uuid: RwLock<Option<String>>,
 }
 
 fn cache_path() -> PathBuf {
@@ -105,6 +107,7 @@ impl AppState {
             connection: Default::default(),
             link: AblLink::new(120.),
             audio_engine: Default::default(),
+            currently_playing_uuid: Default::default(),
         }
     }
 
@@ -131,6 +134,7 @@ impl AppState {
 
 
 // TODO: Graceful handling of address already in use error when trying to launch web server
+// TODO: On CTRL-C (and Windows equavilent) send NoteOff messages for currently raised notes
 #[tokio::main]
 async fn main() {
     let do_help = std::env::args().any(|param| &param == "--help" || &param == "-h");
@@ -259,10 +263,26 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
 
     let beat = session_state.beat_at_time(time, quantum);
 
+    let currently_playing = app_state.currently_playing_uuid.read().unwrap();
+
     html! {
-        "BPM: ";    (session_state.tempo());
-        ", beat: "; (beat);
-        ", playing: "; (session_state.is_playing());
+        div {
+            "BPM: ";    (session_state.tempo());
+            ", beat: "; (beat);
+            ", playing: "; (session_state.is_playing());
+        }
+        @if let Some(currently_playing) = &*currently_playing {
+            div {
+                "Currently playing: ";
+                ({
+                    let sources = app_state.sources.read().unwrap();
+                    let currently_playing = sources.get(currently_playing).unwrap();
+                    // TODO: Avoidable clone?
+                    currently_playing.file_name.clone()
+                });
+                progress max="100" min="0" value="70" {}
+            }
+        }
     }
 }
 
@@ -355,8 +375,8 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                                 onchange="update_key_binding(this)"
                                 type="text";
                         }
-                        td hx-target="this" {
-                            (render_play_cell(uuid, false, None));
+                        td {
+                            (render_play_cell(uuid, None));
                             button
                                 hx-delete=(format!("/midi/{uuid}"))
                                 hx-target="#midi-sources-list"
@@ -372,15 +392,17 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
     }
 }
 
-fn render_play_cell(uuid: &str, playing: bool, error_message: Option<String>) -> Markup {
+fn render_play_cell(uuid: &str, error_message: Option<String>) -> Markup {
     html! {
-        button hx-post=(format!("/midi/play/{uuid}")) hx-swap="innerHTML" {
-            // https://en.wikipedia.org/wiki/Media_control_symbols
-            (if !playing || error_message.is_some() { "▶" } else { "⏹" })
-        }
-        @if let Some(error_message) = error_message {
-            div style="color: red" {
-                (error_message)
+        div {
+            button hx-post=(format!("/midi/play/{uuid}")) {
+                // https://en.wikipedia.org/wiki/Media_control_symbols
+                "▶"
+            }
+            @if let Some(error_message) = error_message {
+                div style="color: red" {
+                    (error_message)
+                }
             }
         }
     }
@@ -420,7 +442,7 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     (cache_path().join(STATE_PATH).to_str().unwrap());
                 }
                 main {
-                    h2 { "Link status" }
+                    h2 { "Runtime status" }
                     div id="link-status" {
                         (link_status_handler(app_state.clone()).await)
                     }
@@ -486,7 +508,6 @@ async fn midi_play_source_handler(
     let started_playing = audio_engine::play(app_state.clone(), &uuid).await;
     render_play_cell(
         &uuid,
-        true,
         if let Err(error_message) = started_playing {
             error!("failed to play requested {uuid}: {error_message}");
             Some(error_message)
