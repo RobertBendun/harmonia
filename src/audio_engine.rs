@@ -1,8 +1,5 @@
 use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Condvar, Mutex, Weak,
-    },
+    sync::{mpsc, Arc, Condvar, Mutex, Weak},
     thread::JoinHandle,
     time::Duration,
 };
@@ -59,7 +56,7 @@ fn audio_engine_main(
     let quantum = 4.0;
 
     *app_state.currently_playing_uuid.write().unwrap() = Some(uuid.to_string());
-    *app_state.current_playing_progress.write().unwrap() = (0 as usize, midi.tracks[0].len());
+    *app_state.current_playing_progress.write().unwrap() = (0_usize, midi.tracks[0].len());
     info!("commiting start state");
 
     app_state.link.capture_app_session_state(&mut session_state);
@@ -190,7 +187,6 @@ impl Default for AudioEngine {
                     if let Err(err) = audio_engine_main(request, &worker_interrupt) {
                         crate::error!("{err:#}")
                     }
-                    ()
                 });
                 current_worker = Some(worker);
             }

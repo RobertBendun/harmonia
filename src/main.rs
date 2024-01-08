@@ -266,7 +266,7 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
 
     let currently_playing = app_state.currently_playing_uuid.read().unwrap();
 
-    let current_playing_progress = app_state.current_playing_progress.read().unwrap().clone();
+    let current_playing_progress = *app_state.current_playing_progress.read().unwrap();
 
     html! {
         div {
