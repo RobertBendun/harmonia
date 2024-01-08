@@ -129,6 +129,8 @@ impl AppState {
     }
 }
 
+
+// TODO: Graceful handling of address already in use error when trying to launch web server
 #[tokio::main]
 async fn main() {
     let do_help = std::env::args().any(|param| &param == "--help" || &param == "-h");
@@ -296,6 +298,9 @@ async fn remove_midi_source_handler(
     {
         let mut sources = app_state.sources.write().unwrap();
         sources.remove(&uuid);
+    }
+    if let Err(err) = app_state.remember_current_sources() {
+        error!("remove_midi_source_handler failed to remember current sources: {err:#}")
     }
 
     midi_sources_render(app_state).await
