@@ -1,5 +1,8 @@
 use std::{
-    sync::{mpsc, Arc, Weak},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Condvar, Mutex, Weak,
+    },
     thread::JoinHandle,
     time::Duration,
 };
@@ -16,10 +19,10 @@ pub struct AudioEngine {
     // synchronization to break it's work and then join to wait until work is finished.
     #[allow(dead_code)]
     worker: JoinHandle<()>,
-    work_in: mpsc::SyncSender<Job>,
+    work_in: mpsc::SyncSender<RequestPlay>,
 }
 
-struct Job {
+struct RequestPlay {
     output: MidiOutputConnection,
     uuid: String,
     app_state: Arc<AppState>,
@@ -27,12 +30,15 @@ struct Job {
 
 // More info on timing:
 // https://majicdesigns.github.io/MD_MIDIFile/page_timing.html
-fn audio_engine_main(job: Job) -> Result<(), String> {
-    let Job {
+fn audio_engine_main(
+    request_play: RequestPlay,
+    interrupts: &(Mutex<bool>, Condvar),
+) -> Result<(), String> {
+    let RequestPlay {
         mut output,
         uuid,
         app_state,
-    } = job;
+    } = request_play;
 
     // TODO: Find better solution then checking two times if we have this source
     let midi_sources = app_state.sources.read().unwrap();
@@ -52,6 +58,8 @@ fn audio_engine_main(job: Job) -> Result<(), String> {
     let mut session_state = SessionState::new();
     let quantum = 4.0;
 
+    *app_state.currently_playing_uuid.write().unwrap() = Some(uuid.to_string());
+    *app_state.current_playing_progress.write().unwrap() = (0 as usize, midi.tracks[0].len());
     info!("commiting start state");
 
     app_state.link.capture_app_session_state(&mut session_state);
@@ -64,18 +72,45 @@ fn audio_engine_main(job: Job) -> Result<(), String> {
     app_state.link.commit_app_session_state(&session_state);
 
     let mut time_passed = 0.0;
+    let mut track = midi.tracks[0].iter().enumerate();
 
-    for (bytes, event) in midi.tracks[0].iter() {
-        app_state.link.capture_app_session_state(&mut session_state);
+    'audio_loop: loop {
+        let Some((nth, (bytes, event))) = track.next() else {
+            break;
+        };
+
+        *app_state.current_playing_progress.write().unwrap() = (nth, midi.tracks[0].len());
+
+        let (interrupt, interruptable_sleep) = interrupts;
+        let interrupted = interrupt.try_lock().map(|x| *x).unwrap_or(false);
+        if interrupted {
+            break;
+        }
 
         let time_to_wait = event.delta.as_int() as f64 / ticks_per_quater_note as f64;
-        let current_time = session_state.beat_at_time(app_state.link.clock_micros(), quantum);
         time_passed += time_to_wait;
 
-        info!("[passed={time_passed}, current={current_time}] {event:?}");
-        if current_time < time_passed {
+        // TODO: Rust makes a note that condvar shouldn't be use in time critical applications?
+        loop {
+            app_state.link.capture_app_session_state(&mut session_state);
+            let current_time = session_state.beat_at_time(app_state.link.clock_micros(), quantum);
+
+            info!("[passed={time_passed}, current={current_time}] {event:?}");
+            if current_time >= time_passed {
+                break;
+            }
+
             let sleep_time = (time_passed - current_time) / 120.0 * 60.0;
-            std::thread::sleep(Duration::from_secs_f64(sleep_time));
+            let guard = interrupt.lock().unwrap();
+            let (interrupted, sleep_result) = interruptable_sleep
+                .wait_timeout(guard, Duration::from_secs_f64(sleep_time))
+                .unwrap();
+            if *interrupted {
+                break 'audio_loop;
+            }
+            if sleep_result.timed_out() {
+                break;
+            }
         }
 
         match event.kind {
@@ -124,6 +159,8 @@ fn audio_engine_main(job: Job) -> Result<(), String> {
         }
     }
 
+    // TODO: Cleanup what was playing
+
     *app_state.currently_playing_uuid.write().unwrap() = None;
 
     Ok(())
@@ -133,11 +170,29 @@ impl Default for AudioEngine {
     fn default() -> Self {
         // TODO: We assume that we handle this request relativly quickly (and thus only 1 in queue)
         let (work_in, work) = mpsc::sync_channel(1);
+
+        let mut interrupt: Option<Arc<(Mutex<bool>, Condvar)>> = None;
+        let mut current_worker: Option<JoinHandle<()>> = None;
+
         let worker = std::thread::spawn(move || {
-            while let Ok(job) = work.recv() {
-                if let Err(err) = audio_engine_main(job) {
-                    crate::error!(err);
+            while let Ok(request) = work.recv() {
+                if let Some(interrupt) = interrupt {
+                    *interrupt.0.lock().unwrap() = true;
+                    interrupt.1.notify_one();
+                    if let Some(current_worker) = current_worker {
+                        current_worker.join().unwrap();
+                    }
                 }
+
+                interrupt = Some(Arc::new((Mutex::new(false), Condvar::new())));
+                let worker_interrupt = interrupt.clone().unwrap();
+                let worker = std::thread::spawn(move || {
+                    if let Err(err) = audio_engine_main(request, &worker_interrupt) {
+                        crate::error!("{err:#}")
+                    }
+                    ()
+                });
+                current_worker = Some(worker);
             }
         });
 
@@ -171,16 +226,13 @@ pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
         .connect(midi_port, /* TODO: Better name */ "play")
         .map_err(|err| format!("failed to connect to midi port: {err}"))?;
 
-    let mut currently_playing = app_state.currently_playing_uuid.write().unwrap();
-    *currently_playing = Some(uuid.to_string());
-
     // TODO: This is wrong approach, we should select what will be played, not what to play now.
     app_state
         .audio_engine
         .write()
         .unwrap()
         .work_in
-        .send(Job {
+        .send(RequestPlay {
             output: conn_out,
             uuid: uuid.to_string(),
             app_state: app_state.clone(),

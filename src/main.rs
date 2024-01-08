@@ -90,6 +90,7 @@ pub struct AppState {
     pub audio_engine: RwLock<AudioEngine>,
     // TODO: Be better
     pub currently_playing_uuid: RwLock<Option<String>>,
+    pub current_playing_progress: RwLock<(usize, usize)>,
 }
 
 fn cache_path() -> PathBuf {
@@ -108,6 +109,7 @@ impl AppState {
             link: AblLink::new(120.),
             audio_engine: Default::default(),
             currently_playing_uuid: Default::default(),
+            current_playing_progress: Default::default(),
         }
     }
 
@@ -131,7 +133,6 @@ impl AppState {
         Ok(())
     }
 }
-
 
 // TODO: Graceful handling of address already in use error when trying to launch web server
 // TODO: On CTRL-C (and Windows equavilent) send NoteOff messages for currently raised notes
@@ -265,6 +266,8 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
 
     let currently_playing = app_state.currently_playing_uuid.read().unwrap();
 
+    let current_playing_progress = app_state.current_playing_progress.read().unwrap().clone();
+
     html! {
         div {
             "BPM: ";    (session_state.tempo());
@@ -280,7 +283,8 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
                     // TODO: Avoidable clone?
                     currently_playing.file_name.clone()
                 });
-                progress max="100" min="0" value="70" {}
+                " ";
+                progress max=(current_playing_progress.1) min="0" value=(current_playing_progress.0) {}
             }
         }
     }
@@ -408,6 +412,7 @@ fn render_play_cell(uuid: &str, error_message: Option<String>) -> Markup {
     }
 }
 
+// TODO: Shorten state cache path when possible - like /home/user/foo to ~/foo
 async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
     html! {
         (DOCTYPE)

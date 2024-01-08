@@ -1,4 +1,4 @@
-use maud::{Markup, html};
+use maud::{html, Markup};
 
 pub struct Version {
     pkg_version: &'static str,
@@ -22,21 +22,33 @@ impl Default for Version {
                 } else {
                     ""
                 }
-            }
+            },
         }
     }
 }
 
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { pkg_version, hash, date, dirty, .. } = self;
+        let Self {
+            pkg_version,
+            hash,
+            date,
+            dirty,
+            ..
+        } = self;
         write!(f, "{pkg_version} ({hash} {date}{dirty})")
     }
 }
 
 impl maud::Render for Version {
     fn render(&self) -> Markup {
-        let Self { pkg_version, hash, full_hash, date, dirty } = self;
+        let Self {
+            pkg_version,
+            hash,
+            full_hash,
+            date,
+            dirty,
+        } = self;
         html! {
             (pkg_version);
             " (";
