@@ -3,6 +3,26 @@ name = "harmonia"
 version = "0.1.0"
 edition = "2021"
 build = "src/build.rs"
+default-run = "harmonia"
+
+[[bin]]
+name = "harmonia"
+test = false
+bench = false
+path = "src/harmonia.rs"
+
+[[bin]]
+name = "linky_start"
+test = false
+bench = false
+path = "src/playground.rs"
+
+[lib]
+name = "linky_start"
+crate-type = ["lib"]
+test = true
+bench = false
+path = "src/linky_start.rs"
 
 [dependencies]
 axum = { version = "0.6.20", features = ["ws", "headers", "multipart", "macros"] }
@@ -26,6 +46,7 @@ build-time = "0.1.3"
 bson = "2.7.0"
 anyhow = "1.0.75"
 dirs = "5.0.1"
+socket2 = { version = "0.5.5", features = ["all"] }
 
 [dependencies.uuid]
 version = "1.4.1"
