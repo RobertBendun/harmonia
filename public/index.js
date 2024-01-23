@@ -84,3 +84,7 @@ function update_key_binding(input_element) {
 		registered_key_bindings[input_element.value.trim()] = 0;
 	}
 }
+
+async function change_link_status() {
+	await fetch('/api/link-switch-enabled', { method: 'POST' });
+}

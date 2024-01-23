@@ -184,6 +184,10 @@ async fn main() {
             "/api/link-status-websocket",
             get(link_status_websocket_handler),
         )
+        .route(
+            "/api/link-switch-enabled",
+            post(link_switch_enabled),
+        )
         .route("/link/status", get(link_status_handler))
         .route("/midi", put(midi_add_new_source_handler))
         .route("/midi/", put(midi_add_new_source_handler))
@@ -256,6 +260,7 @@ async fn local_ips_handler() -> Markup {
 
 async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     let mut session_state = SessionState::default();
+    let active = app_state.link.is_enabled();
     app_state.link.capture_app_session_state(&mut session_state);
     let time = app_state.link.clock_micros();
 
@@ -270,7 +275,8 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
 
     html! {
         div {
-            "BPM: ";    (session_state.tempo());
+            "Active: "; (active);
+            ", BPM: ";    (session_state.tempo());
             ", beat: "; (beat);
             ", playing: "; (session_state.is_playing());
         }
@@ -448,6 +454,9 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                 }
                 main {
                     h2 { "Runtime status" }
+                    button onclick="change_link_status()" {
+                        "Change link status"
+                    }
                     div id="link-status" {
                         (link_status_handler(app_state.clone()).await)
                     }
@@ -551,6 +560,10 @@ async fn midi_add_new_source_handler(
     }
 
     midi_sources_render(axum::extract::State(app_state)).await
+}
+
+async fn link_switch_enabled(State(app_state): State<Arc<AppState>>) {
+    app_state.link.enable(!app_state.link.is_enabled());
 }
 
 // For expanding this websocket buisness see: https://github.com/tokio-rs/axum/blob/main/examples/websockets/src/main.rs
