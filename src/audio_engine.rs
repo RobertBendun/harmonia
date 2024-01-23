@@ -16,7 +16,12 @@ pub struct AudioEngine {
     // synchronization to break it's work and then join to wait until work is finished.
     #[allow(dead_code)]
     worker: JoinHandle<()>,
-    work_in: mpsc::SyncSender<RequestPlay>,
+    work_in: mpsc::SyncSender<Request>,
+}
+
+enum Request {
+    Interrupt,
+    Play(RequestPlay),
 }
 
 struct RequestPlay {
@@ -49,7 +54,10 @@ fn audio_engine_main(
 
     let ticks_per_quater_note = match midi.header.timing {
         midly::Timing::Metrical(tpqn) => tpqn.as_int(),
-        _ => return Err("Timecode timing format is not supported".to_string()),
+        _ => {
+            output.close();
+            return Err("Timecode timing format is not supported".to_string());
+        },
     };
 
     let mut session_state = SessionState::new();
@@ -158,8 +166,8 @@ fn audio_engine_main(
 
     // TODO: Cleanup what was playing
 
+    output.close();
     *app_state.currently_playing_uuid.write().unwrap() = None;
-
     Ok(())
 }
 
@@ -173,13 +181,20 @@ impl Default for AudioEngine {
 
         let worker = std::thread::spawn(move || {
             while let Ok(request) = work.recv() {
-                if let Some(interrupt) = interrupt {
+                if let Some(interrupt) = interrupt.take() {
                     *interrupt.0.lock().unwrap() = true;
                     interrupt.1.notify_one();
-                    if let Some(current_worker) = current_worker {
+                    if let Some(current_worker) = current_worker.take() {
                         current_worker.join().unwrap();
                     }
                 }
+
+                // Written verbosely to give compiler ability to warn when Request gets another
+                // option
+                let request = match request {
+                    Request::Play(request) => request,
+                    Request::Interrupt => continue,
+                };
 
                 interrupt = Some(Arc::new((Mutex::new(false), Condvar::new())));
                 let worker_interrupt = interrupt.clone().unwrap();
@@ -228,11 +243,11 @@ pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
         .write()
         .unwrap()
         .work_in
-        .send(RequestPlay {
+        .send(Request::Play(RequestPlay {
             output: conn_out,
             uuid: uuid.to_string(),
             app_state: app_state.clone(),
-        })
+        }))
         .map_err(|err| format!("failed to send job: {err}"))?;
 
     Ok(())
