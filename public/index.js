@@ -66,13 +66,14 @@ const registered_key_bindings = {};
 /**
 	* @param {KeyboardEvent} input_element
 	*/
-function keyup(ev) {
+async function keyup(ev) {
 	if (ev.target.nodeName == "INPUT") {
 		return;
 	}
 
-	if (ev.key in registered_key_bindings) {
-		console.log('registered!!!!');
+	const input_element = registered_key_bindings[ev.key];
+	if (input_element) {
+		await fetch(`/midi/play/${input_element.dataset.uuid}`, { method: 'POST' });
 	}
 }
 
@@ -81,7 +82,7 @@ function keyup(ev) {
 	*/
 function update_key_binding(input_element) {
 	if (input_element.value.length > 0) {
-		registered_key_bindings[input_element.value.trim()] = 0;
+		registered_key_bindings[input_element.value.trim()] = input_element;
 	}
 }
 

@@ -50,6 +50,7 @@ pub struct MidiSource {
     pub bytes: Vec<u8>,
     pub file_name: String,
     pub associated_port: usize,
+    pub keybind: String,
 }
 
 impl MidiSource {
@@ -193,6 +194,7 @@ async fn main() {
         .route("/midi/play/:uuid", post(midi_play_source_handler))
         .route("/midi/ports", get(midi_list_ports_handler))
         .route("/midi/set-port/:uuid", post(midi_set_port_for_source))
+        .route("/midi/set-keybind/:uuid", post(midi_set_keybind_for_source))
         .route("/version", get(version_handler))
         .route("/midi/interrupt", post(midi_interrupt))
         .route("/", get(index_handler))
@@ -333,6 +335,28 @@ async fn midi_set_port_for_source(
     Ok(render_port_cell(&uuid, midi_source.associated_port, None))
 }
 
+#[derive(Deserialize)]
+struct SetKeybind {
+    pub keybind: String,
+}
+
+async fn midi_set_keybind_for_source(
+    app_state: State<Arc<AppState>>,
+    Path(uuid): Path<String>,
+    Form(SetKeybind { keybind }): Form<SetKeybind>,
+) -> StatusCode {
+    let mut midi_sources = app_state.sources.write().unwrap();
+
+    let Some(mut midi_source) = midi_sources.get_mut(&uuid) else {
+        error!("{uuid} not found");
+        return StatusCode::NOT_FOUND;
+    };
+
+    info!("Changing keybind for {uuid} to {keybind}");
+    midi_source.keybind = keybind;
+    StatusCode::OK
+}
+
 async fn midi_download_source_handler(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
@@ -415,10 +439,13 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                         }
                         td {
                             input
-                                class="keybind"
+                                name="keybind"
                                 data-uuid=(uuid)
                                 onchange="update_key_binding(this)"
-                                type="text";
+                                type="text"
+                                hx-post=(format!("/midi/set-keybind/{uuid}"))
+                                hx-swap="none"
+                                value=(source.keybind);
                         }
                         td {
                             (render_play_cell(uuid, None));
@@ -605,7 +632,8 @@ async fn midi_add_new_source_handler(
         let midi_source = MidiSource {
             bytes: data,
             file_name: file_name.clone(),
-            associated_port: 1,
+            associated_port: 0,
+            keybind: Default::default(),
         };
 
         let midi_sources = &mut app_state.sources.write().unwrap();
