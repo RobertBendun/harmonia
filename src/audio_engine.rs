@@ -5,6 +5,7 @@ use std::{
 };
 
 use midir::{MidiOutput, MidiOutputConnection};
+use midly::live::LiveEvent;
 use rusty_link::SessionState;
 use tracing::{info, warn};
 
@@ -80,6 +81,8 @@ fn audio_engine_main(
     let mut time_passed = 0.0;
     let mut track = midi.tracks.last().unwrap().iter().enumerate();
 
+    let mut notes_played_per_channel = [[false; 128]; 16];
+
     'audio_loop: loop {
         let Some((nth, (bytes, event))) = track.next() else {
             break;
@@ -143,12 +146,17 @@ fn audio_engine_main(
                 }
             },
             midly::TrackEventKind::Midi {
-                channel: _,
+                channel,
                 message,
             } => match message {
                 // TODO: Remember currenlty played notes so we can unwind this musical stack when
                 // we turn it off.
-                midly::MidiMessage::NoteOn { .. } | midly::MidiMessage::NoteOff { .. } => {
+                midly::MidiMessage::NoteOn { key, vel } => {
+                    notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] = vel != 0;
+                    output.send(bytes).unwrap();
+                }
+                midly::MidiMessage::NoteOff { key, .. } => {
+                    notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] = false;
                     output.send(bytes).unwrap();
                 }
                 msg => {
@@ -166,7 +174,23 @@ fn audio_engine_main(
         }
     }
 
-    // TODO: Cleanup what was playing
+    for (channel, notes) in notes_played_per_channel.iter().enumerate() {
+        for (key, played) in notes.iter().enumerate() {
+            if *played {
+                let event = LiveEvent::Midi {
+                    channel: (channel as u8).into(),
+                    message: midly::MidiMessage::NoteOff {
+                        key: (key as u8).into(),
+                        vel: 0.into(),
+                    }
+                };
+
+                let mut buf = [0_u8; 4];
+                event.write_std(&mut buf[..]).unwrap();
+                output.send(&buf).unwrap();
+            }
+        }
+    }
 
     output.close();
     *app_state.currently_playing_uuid.write().unwrap() = None;
@@ -215,6 +239,16 @@ impl Default for AudioEngine {
             work_in,
         }
     }
+}
+
+pub async fn interrupt(app_state: Arc<AppState>) -> Result<(), String> {
+    app_state
+        .audio_engine
+        .write()
+        .unwrap()
+        .work_in
+        .send(Request::Interrupt)
+        .map_err(|err| format!("failed to send job: {err}"))
 }
 
 pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {

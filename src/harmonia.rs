@@ -194,6 +194,7 @@ async fn main() {
         .route("/midi/ports", get(midi_list_ports_handler))
         .route("/midi/set-port/:uuid", post(midi_set_port_for_source))
         .route("/version", get(version_handler))
+        .route("/midi/interrupt", post(midi_interrupt))
         .route("/", get(index_handler))
         .layer(
             TraceLayer::new_for_http()
@@ -312,15 +313,19 @@ async fn midi_set_port_for_source(
         error!("{uuid} not found");
         return Err(StatusCode::NOT_FOUND);
     };
-    let min = 1 as usize;
+    let min = 1_usize;
     let max = app_state.connection.read().unwrap().ports.len();
     if port < min || port > max {
         error!("port number should be between {min} and {max}");
-        return Ok(render_port_cell(&uuid, midi_source.associated_port, Some(if port > max {
-            "port number too high".to_string()
-        } else {
-            "port number too low".to_string()
-        })));
+        return Ok(render_port_cell(
+            &uuid,
+            midi_source.associated_port,
+            Some(if port > max {
+                "port number too high".to_string()
+            } else {
+                "port number too low".to_string()
+            }),
+        ));
     }
 
     info!("setting port {port} for {uuid}");
@@ -502,6 +507,9 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     button onclick="change_link_status()" {
                         "Change link status"
                     }
+                    button hx-post="/midi/interrupt" hx-swap="none" {
+                        "Interrupt MIDI"
+                    }
                     div id="link-status" {
                         (link_status_handler(app_state.clone()).await)
                     }
@@ -574,6 +582,10 @@ async fn midi_play_source_handler(
             None
         },
     )
+}
+
+async fn midi_interrupt(State(app_state): State<Arc<AppState>>) {
+    let _ = audio_engine::interrupt(app_state).await;
 }
 
 async fn midi_add_new_source_handler(
