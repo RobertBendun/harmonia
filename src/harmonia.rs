@@ -305,22 +305,27 @@ async fn midi_set_port_for_source(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
     Form(SetPort { port }): Form<SetPort>,
-) -> StatusCode {
+) -> Result<Markup, StatusCode> {
     let mut midi_sources = app_state.sources.write().unwrap();
 
     let Some(mut midi_source) = midi_sources.get_mut(&uuid) else {
         error!("{uuid} not found");
-        return StatusCode::NOT_FOUND;
+        return Err(StatusCode::NOT_FOUND);
     };
     let min = 1 as usize;
     let max = app_state.connection.read().unwrap().ports.len();
     if port < min || port > max {
         error!("port number should be between {min} and {max}");
-        return StatusCode::NOT_IMPLEMENTED;
+        return Ok(render_port_cell(&uuid, midi_source.associated_port, Some(if port > max {
+            "port number too high".to_string()
+        } else {
+            "port number too low".to_string()
+        })));
     }
-    midi_source.associated_port = port;
+
     info!("setting port {port} for {uuid}");
-    StatusCode::OK
+    midi_source.associated_port = port - 1;
+    Ok(render_port_cell(&uuid, midi_source.associated_port, None))
 }
 
 async fn midi_download_source_handler(
@@ -401,10 +406,7 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                             },
                         }
                         td {
-                            input
-                                type="number" value=(source.associated_port)
-                                name="port"
-                                hx-post=(format!("/midi/set-port/{uuid}"));
+                            (render_port_cell(uuid, source.associated_port, None));
                         }
                         td {
                             input
@@ -432,16 +434,31 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
 
 fn render_play_cell(uuid: &str, error_message: Option<String>) -> Markup {
     html! {
-        div {
-            button hx-post=(format!("/midi/play/{uuid}")) {
-                // https://en.wikipedia.org/wiki/Media_control_symbols
-                "▶"
+        button hx-target="closest td" hx-post=(format!("/midi/play/{uuid}")) {
+            // https://en.wikipedia.org/wiki/Media_control_symbols
+            "▶"
+        }
+        @if let Some(error_message) = error_message {
+            div style="color: red" {
+                (error_message)
             }
-            @if let Some(error_message) = error_message {
-                div style="color: red" {
-                    (error_message)
-                }
+        }
+    }
+}
+
+fn render_port_cell(uuid: &str, associated_port: usize, error_message: Option<String>) -> Markup {
+    html! {
+        input
+            type="number" value=(format!("{}", associated_port + 1))
+            name="port"
+            hx-target="closest td"
+            hx-post=(format!("/midi/set-port/{uuid}"));
+
+        @if let Some(error_message) = error_message {
+            div style="color: red" {
+                (error_message)
             }
+
         }
     }
 }
