@@ -20,7 +20,7 @@ use axum::{
     },
     response::IntoResponse,
     routing::{delete, get, post, put},
-    Router, TypedHeader,
+    Form, Router, TypedHeader,
 };
 
 use midir::{MidiOutput, MidiOutputPort};
@@ -184,10 +184,7 @@ async fn main() {
             "/api/link-status-websocket",
             get(link_status_websocket_handler),
         )
-        .route(
-            "/api/link-switch-enabled",
-            post(link_switch_enabled),
-        )
+        .route("/api/link-switch-enabled", post(link_switch_enabled))
         .route("/link/status", get(link_status_handler))
         .route("/midi", put(midi_add_new_source_handler))
         .route("/midi/", put(midi_add_new_source_handler))
@@ -195,6 +192,7 @@ async fn main() {
         .route("/midi/:uuid", get(midi_download_source_handler))
         .route("/midi/play/:uuid", post(midi_play_source_handler))
         .route("/midi/ports", get(midi_list_ports_handler))
+        .route("/midi/set-port/:uuid", post(midi_set_port_for_source))
         .route("/version", get(version_handler))
         .route("/", get(index_handler))
         .layer(
@@ -296,6 +294,35 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     }
 }
 
+#[derive(Deserialize)]
+struct SetPort {
+    pub port: usize,
+}
+
+// TODO: Implement better response. For example respond with partial HTML that would contain error
+// message
+async fn midi_set_port_for_source(
+    app_state: State<Arc<AppState>>,
+    Path(uuid): Path<String>,
+    Form(SetPort { port }): Form<SetPort>,
+) -> StatusCode {
+    let mut midi_sources = app_state.sources.write().unwrap();
+
+    let Some(mut midi_source) = midi_sources.get_mut(&uuid) else {
+        error!("{uuid} not found");
+        return StatusCode::NOT_FOUND;
+    };
+    let min = 1 as usize;
+    let max = app_state.connection.read().unwrap().ports.len();
+    if port < min || port > max {
+        error!("port number should be between {min} and {max}");
+        return StatusCode::NOT_IMPLEMENTED;
+    }
+    midi_source.associated_port = port;
+    info!("setting port {port} for {uuid}");
+    StatusCode::OK
+}
+
 async fn midi_download_source_handler(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
@@ -376,7 +403,8 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                         td {
                             input
                                 type="number" value=(source.associated_port)
-                                hx-post=(format!("/midi/set-port/{uuid}/"));
+                                name="port"
+                                hx-post=(format!("/midi/set-port/{uuid}"));
                         }
                         td {
                             input

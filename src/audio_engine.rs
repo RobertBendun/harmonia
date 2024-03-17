@@ -57,14 +57,15 @@ fn audio_engine_main(
         _ => {
             output.close();
             return Err("Timecode timing format is not supported".to_string());
-        },
+        }
     };
 
     let mut session_state = SessionState::new();
     let quantum = 4.0;
 
     *app_state.currently_playing_uuid.write().unwrap() = Some(uuid.to_string());
-    *app_state.current_playing_progress.write().unwrap() = (0_usize, midi.tracks.last().unwrap().len());
+    *app_state.current_playing_progress.write().unwrap() =
+        (0_usize, midi.tracks.last().unwrap().len());
     info!("commiting start state");
 
     app_state.link.capture_app_session_state(&mut session_state);
@@ -84,7 +85,8 @@ fn audio_engine_main(
             break;
         };
 
-        *app_state.current_playing_progress.write().unwrap() = (nth, midi.tracks.last().unwrap().len());
+        *app_state.current_playing_progress.write().unwrap() =
+            (nth, midi.tracks.last().unwrap().len());
 
         let (interrupt, interruptable_sleep) = interrupts;
         let interrupted = interrupt.try_lock().map(|x| *x).unwrap_or(false);
@@ -227,11 +229,12 @@ pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
 
     let midi_out = MidiOutput::new("harmonia")
         .map_err(|err| format!("failed to create midi output port: {err}"))?;
-    // TODO: Use associated port
-    let midi_port = &midi_out.ports()[0];
+
+    let midi_port = &midi_out.ports()[midi_source.associated_port];
     info!(
-        "outputing to output port: {}",
-        midi_out.port_name(midi_port).unwrap()
+        "outputing to output port #{} named: {}",
+        midi_source.associated_port,
+        midi_out.port_name(midi_port).unwrap(),
     );
     let conn_out = midi_out
         .connect(midi_port, /* TODO: Better name */ "play")
