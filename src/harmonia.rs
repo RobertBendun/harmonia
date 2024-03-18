@@ -1,7 +1,8 @@
+use clap::Parser;
 use std::{
     collections::HashMap,
     io::BufReader,
-    net::SocketAddr,
+    net::{SocketAddr, IpAddr},
     path::PathBuf,
     sync::{Arc, RwLock},
     time::Duration,
@@ -92,6 +93,7 @@ pub struct AppState {
     // TODO: Be better
     pub currently_playing_uuid: RwLock<Option<String>>,
     pub current_playing_progress: RwLock<(usize, usize)>,
+    pub port: u16,
 }
 
 fn cache_path() -> PathBuf {
@@ -103,7 +105,7 @@ fn cache_path() -> PathBuf {
 }
 
 impl AppState {
-    fn new() -> Self {
+    fn new(port: u16) -> Self {
         Self {
             sources: Default::default(),
             connection: Default::default(),
@@ -111,6 +113,7 @@ impl AppState {
             audio_engine: Default::default(),
             currently_playing_uuid: Default::default(),
             current_playing_progress: Default::default(),
+            port,
         }
     }
 
@@ -135,17 +138,30 @@ impl AppState {
     }
 }
 
+#[derive(Parser, Debug)]
+struct Args {
+    /// Don't start link connection
+    #[arg(long)]
+    disable_link: bool,
+
+    /// Open UI in default browser
+    #[arg(long)]
+    open: bool,
+
+    /// IP for UI
+    #[arg(short, long, default_value_t = String::from("0.0.0.0"))]
+    ip: String,
+
+    /// Port for UI
+    #[arg(short, long, default_value_t = 8080)]
+    port: u16,
+}
+
 // TODO: Graceful handling of address already in use error when trying to launch web server
 // TODO: On CTRL-C (and Windows equavilent) send NoteOff messages for currently raised notes
 #[tokio::main]
 async fn main() {
-    let do_help = std::env::args().any(|param| &param == "--help" || &param == "-h");
-    let do_open = std::env::args().any(|param| &param == "--open");
-    let disable_link = std::env::args().any(|param| &param == "--disable-link");
-
-    if do_help {
-        help_and_exit();
-    }
+    let args = Args::parse();
 
     tracing_subscriber::registry()
         .with(
@@ -157,7 +173,7 @@ async fn main() {
 
     info!("starting up version {}", Version::default());
 
-    let app_state = Arc::new(AppState::new());
+    let app_state = Arc::new(AppState::new(args.port));
     if let Err(err) = app_state.recollect_previous_sources() {
         warn!("trying to recollect previous sources: {err:#}")
     } else {
@@ -168,10 +184,10 @@ async fn main() {
     }
 
     app_state.audio_engine.write().unwrap().state = Arc::downgrade(&app_state);
-    app_state.link.enable(!disable_link);
+    app_state.link.enable(!args.disable_link);
     info!(
         "link {}",
-        if disable_link { "not active" } else { "active" }
+        if args.disable_link { "not active" } else { "active" }
     );
 
     let public_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
@@ -204,12 +220,14 @@ async fn main() {
         )
         .with_state(app_state.clone());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    let ip: IpAddr = args.ip.parse().unwrap();
+
+    let addr = SocketAddr::from((ip, args.port));
     info!("listening on http://{addr}");
     let server =
         axum::Server::bind(&addr).serve(app.into_make_service_with_connect_info::<SocketAddr>());
 
-    if do_open {
+    if args.open {
         info!("opening UI in default browser");
         open::that_detached(format!("http://{addr}")).unwrap();
     }
@@ -218,14 +236,8 @@ async fn main() {
     app_state.link.enable(false);
 }
 
-fn help_and_exit() -> ! {
-    println!("harmonia [--open] [--help]");
-    println!("  --open - opens UI in default browser");
-    println!("  --help - prints this message");
-    std::process::exit(0);
-}
-
-async fn local_ips_handler() -> Markup {
+async fn local_ips_handler(app_state: State<Arc<AppState>>) -> Markup {
+    let port = app_state.port;
     let mut interfaces = match local_ip_address::list_afinet_netifas() {
         Ok(list) => list,
         Err(err) => {
@@ -250,7 +262,10 @@ async fn local_ips_handler() -> Markup {
                 @for (iface, ip) in interfaces {
                     @if !ip.is_loopback() {
                         li {
-                            (format!("{iface} - {ip}"));
+                            (format!("{iface} -"));
+                            a href=(format!("http://{ip}:{port}")) {
+                                (ip);
+                            }
                         }
                     }
                 }
@@ -541,7 +556,7 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                         (link_status_handler(app_state.clone()).await)
                     }
                     h2 { "System information" }
-                    (local_ips_handler().await);
+                    (local_ips_handler(app_state.clone()).await);
                     h3 { "MIDI ports" }
                     button hx-get="/midi/ports" hx-target="#midi-ports" hx-swap="innerHTML" {
                         "Refresh"
