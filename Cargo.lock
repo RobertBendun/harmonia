@@ -48,7 +48,7 @@ dependencies = [
  "alsa-sys",
  "bitflags 1.3.2",
  "libc",
- "nix",
+ "nix 0.24.3",
 ]
 
 [[package]]
@@ -380,6 +380,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "cfg_aliases"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
+
+[[package]]
 name = "chrono"
 version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -555,6 +561,16 @@ checksum = "1bfb12502f3fc46cca1bb51ac28df9d618d813cdc3d2f25b9fe775a34af26bb3"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "ctrlc"
+version = "3.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "672465ae37dc1bc6380a6547a8883d5dd397b0f1faaad4f265726cc7042a5345"
+dependencies = [
+ "nix 0.28.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -761,6 +777,7 @@ dependencies = [
  "build-time",
  "chrono",
  "clap",
+ "ctrlc",
  "dirs",
  "gethostname",
  "headers",
@@ -1015,9 +1032,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.152"
+version = "0.2.153"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13e3bf6590cbc649f4d1a3eefc9d5d6eb746f5200ffb04e5e142700b8faa56e7"
+checksum = "9c198f91728a82281a64e1f4f9eeb25d82cb32a5de251c6bd1b5154d63a8e7bd"
 
 [[package]]
 name = "libloading"
@@ -1246,6 +1263,18 @@ checksum = "fa52e972a9a719cecb6864fb88568781eb706bac2cd1d4f04a648542dbf78069"
 dependencies = [
  "bitflags 1.3.2",
  "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
+dependencies = [
+ "bitflags 2.4.0",
+ "cfg-if",
+ "cfg_aliases",
  "libc",
 ]
 

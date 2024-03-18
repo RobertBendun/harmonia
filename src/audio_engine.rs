@@ -15,12 +15,12 @@ pub struct AudioEngine {
     pub state: Weak<AppState>,
     // TODO: Sefely join and destroy this thread using some sort of contition variable
     // synchronization to break it's work and then join to wait until work is finished.
-    #[allow(dead_code)]
-    worker: JoinHandle<()>,
+    worker: Option<JoinHandle<()>>,
     work_in: mpsc::SyncSender<Request>,
 }
 
 enum Request {
+    Quit,
     Interrupt,
     Play(RequestPlay),
 }
@@ -219,6 +219,7 @@ impl Default for AudioEngine {
                 let request = match request {
                     Request::Play(request) => request,
                     Request::Interrupt => continue,
+                    Request::Quit => break,
                 };
 
                 interrupt = Some(Arc::new((Mutex::new(false), Condvar::new())));
@@ -234,13 +235,26 @@ impl Default for AudioEngine {
 
         Self {
             state: Default::default(),
-            worker,
+            worker: Some(worker),
             work_in,
         }
     }
 }
 
-pub async fn interrupt(app_state: Arc<AppState>) -> Result<(), String> {
+pub fn quit(app_state: Arc<AppState>) {
+    let Ok(_) = app_state
+        .audio_engine
+        .write()
+        .unwrap()
+        .work_in
+        .send(Request::Quit) else { return; };
+
+    if let Some(worker) = app_state.audio_engine.write().unwrap().worker.take() {
+        let _ = worker.join();
+    }
+}
+
+pub fn interrupt(app_state: Arc<AppState>) -> Result<(), String> {
     app_state
         .audio_engine
         .write()
@@ -250,7 +264,7 @@ pub async fn interrupt(app_state: Arc<AppState>) -> Result<(), String> {
         .map_err(|err| format!("failed to send job: {err}"))
 }
 
-pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
+pub fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
     let midi_sources = app_state.sources.read().unwrap();
     let Some(midi_source) = midi_sources.get(uuid) else {
         return Err(format!("{uuid} not found. Try reloading page"));

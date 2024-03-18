@@ -195,7 +195,17 @@ fn setup_logging_system() {
     info!("log in {log_path:?}");
 }
 
-// TODO: On CTRL-C (and Windows equavilent) send NoteOff messages for currently raised notes
+fn setup_ctrlc_handler(app_state: Arc<AppState>) {
+    ctrlc::set_handler(move || {
+        // TODO: Gracefull shutdown of web server
+        // https://docs.rs/tokio/latest/tokio/signal/fn.ctrl_c.html
+        // https://github.com/tokio-rs/axum/blob/main/examples/graceful-shutdown/src/main.rs
+        // https://docs.rs/hyper/0.14.28/hyper/server/struct.Server.html#method.with_graceful_shutdown
+        audio_engine::quit(app_state.clone());
+        std::process::exit(/* SIGINT */ 130);
+    }).expect("we cannot control CTRL-C -_-");
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
@@ -212,6 +222,8 @@ async fn main() -> ExitCode {
             count = app_state.sources.read().unwrap().len()
         )
     }
+
+    setup_ctrlc_handler(app_state.clone());
 
     app_state.audio_engine.write().unwrap().state = Arc::downgrade(&app_state);
     app_state.link.enable(!args.disable_link);
@@ -382,7 +394,7 @@ async fn midi_set_port_for_source(
 ) -> Result<Markup, StatusCode> {
     let mut midi_sources = app_state.sources.write().unwrap();
 
-    let Some(mut midi_source) = midi_sources.get_mut(&uuid) else {
+    let Some(midi_source) = midi_sources.get_mut(&uuid) else {
         error!("{uuid} not found");
         return Err(StatusCode::NOT_FOUND);
     };
@@ -418,7 +430,7 @@ async fn midi_set_keybind_for_source(
 ) -> StatusCode {
     let mut midi_sources = app_state.sources.write().unwrap();
 
-    let Some(mut midi_source) = midi_sources.get_mut(&uuid) else {
+    let Some(midi_source) = midi_sources.get_mut(&uuid) else {
         error!("{uuid} not found");
         return StatusCode::NOT_FOUND;
     };
@@ -672,7 +684,7 @@ async fn midi_play_source_handler(
     State(app_state): State<Arc<AppState>>,
     Path(uuid): Path<String>,
 ) -> Markup {
-    let started_playing = audio_engine::play(app_state.clone(), &uuid).await;
+    let started_playing = audio_engine::play(app_state.clone(), &uuid);
     render_play_cell(
         &uuid,
         if let Err(error_message) = started_playing {
@@ -685,7 +697,7 @@ async fn midi_play_source_handler(
 }
 
 async fn midi_interrupt(State(app_state): State<Arc<AppState>>) {
-    let _ = audio_engine::interrupt(app_state).await;
+    let _ = audio_engine::interrupt(app_state);
 }
 
 async fn midi_add_new_source_handler(
