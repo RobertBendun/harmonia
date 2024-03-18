@@ -247,7 +247,10 @@ pub fn quit(app_state: Arc<AppState>) {
         .write()
         .unwrap()
         .work_in
-        .send(Request::Quit) else { return; };
+        .send(Request::Quit)
+    else {
+        return;
+    };
 
     if let Some(worker) = app_state.audio_engine.write().unwrap().worker.take() {
         let _ = worker.join();

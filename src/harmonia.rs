@@ -203,7 +203,8 @@ fn setup_ctrlc_handler(app_state: Arc<AppState>) {
         // https://docs.rs/hyper/0.14.28/hyper/server/struct.Server.html#method.with_graceful_shutdown
         audio_engine::quit(app_state.clone());
         std::process::exit(/* SIGINT */ 130);
-    }).expect("we cannot control CTRL-C -_-");
+    })
+    .expect("we cannot control CTRL-C -_-");
 }
 
 #[tokio::main]
