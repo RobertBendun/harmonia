@@ -2,7 +2,7 @@ use clap::Parser;
 use std::{
     collections::HashMap,
     io::BufReader,
-    net::{SocketAddr, IpAddr},
+    net::{IpAddr, SocketAddr},
     path::PathBuf,
     sync::{Arc, RwLock},
     time::Duration,
@@ -187,7 +187,11 @@ async fn main() {
     app_state.link.enable(!args.disable_link);
     info!(
         "link {}",
-        if args.disable_link { "not active" } else { "active" }
+        if args.disable_link {
+            "not active"
+        } else {
+            "active"
+        }
     );
 
     let public_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
@@ -236,7 +240,7 @@ async fn main() {
     app_state.link.enable(false);
 }
 
-async fn local_ips_handler(app_state: State<Arc<AppState>>) -> Markup {
+async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
     let port = app_state.port;
     let mut interfaces = match local_ip_address::list_afinet_netifas() {
         Ok(list) => list,
@@ -252,19 +256,35 @@ async fn local_ips_handler(app_state: State<Arc<AppState>>) -> Markup {
 
     interfaces.sort_by(|(if1, _), (if2, _)| if1.cmp(if2));
 
+    let hostname = gethostname::gethostname();
+    let hostname = hostname.to_string_lossy().to_owned();
+
     html! {
         details {
             summary {
-                "Local IP addresses"
+                "Hostname, IP address"
             }
 
-            ul {
-                @for (iface, ip) in interfaces {
-                    @if !ip.is_loopback() {
-                        li {
-                            (format!("{iface} -"));
-                            a href=(format!("http://{ip}:{port}")) {
-                                (ip);
+            p {
+                "Hostname: "; a href=(format!("http://{hostname}:{port}")) {
+                    (hostname)
+                }
+            }
+
+            @if let Ok(local_ip) = local_ip_address::local_ip() {
+                p {
+                    "Local IP: ";
+                    (local_ip)
+                }
+            } @else {
+                ul {
+                    @for (iface, ip) in interfaces {
+                        @if !ip.is_loopback() {
+                            li {
+                                (format!("{iface} -"));
+                                a href=(format!("http://{ip}:{port}")) {
+                                    (ip);
+                                }
                             }
                         }
                     }
@@ -381,7 +401,9 @@ async fn midi_download_source_handler(
         error!("{uuid} not found");
         let mut response = Response::new(Full::from("not found"));
         *response.status_mut() = StatusCode::NOT_FOUND;
-        response.headers_mut().insert(CONTENT_TYPE, "text/html".parse().unwrap());
+        response
+            .headers_mut()
+            .insert(CONTENT_TYPE, "text/html".parse().unwrap());
         return response;
     };
 
@@ -556,7 +578,7 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                         (link_status_handler(app_state.clone()).await)
                     }
                     h2 { "System information" }
-                    (local_ips_handler(app_state.clone()).await);
+                    (system_information(app_state.clone()).await);
                     h3 { "MIDI ports" }
                     button hx-get="/midi/ports" hx-target="#midi-ports" hx-swap="innerHTML" {
                         "Refresh"

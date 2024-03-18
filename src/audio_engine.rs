@@ -145,18 +145,17 @@ fn audio_engine_main(
                     warn!("unknown meta message: {msg:?}")
                 }
             },
-            midly::TrackEventKind::Midi {
-                channel,
-                message,
-            } => match message {
+            midly::TrackEventKind::Midi { channel, message } => match message {
                 // TODO: Remember currenlty played notes so we can unwind this musical stack when
                 // we turn it off.
                 midly::MidiMessage::NoteOn { key, vel } => {
-                    notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] = vel != 0;
+                    notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] =
+                        vel != 0;
                     output.send(bytes).unwrap();
                 }
                 midly::MidiMessage::NoteOff { key, .. } => {
-                    notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] = false;
+                    notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] =
+                        false;
                     output.send(bytes).unwrap();
                 }
                 msg => {
@@ -182,7 +181,7 @@ fn audio_engine_main(
                     message: midly::MidiMessage::NoteOff {
                         key: (key as u8).into(),
                         vel: 0.into(),
-                    }
+                    },
                 };
 
                 let mut buf = [0_u8; 4];
