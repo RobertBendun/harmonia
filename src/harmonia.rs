@@ -1,9 +1,11 @@
 use clap::Parser;
 use std::{
     collections::HashMap,
+    fs::File,
     io::BufReader,
     net::{IpAddr, SocketAddr},
     path::PathBuf,
+    process::ExitCode,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -33,7 +35,7 @@ use tower_http::{
     trace::{DefaultMakeSpan, TraceLayer},
 };
 use tracing::{error, info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use maud::{html, Markup, DOCTYPE};
 
@@ -104,6 +106,14 @@ fn cache_path() -> PathBuf {
     path
 }
 
+fn data_path() -> PathBuf {
+    let path = dirs::data_dir()
+        .expect("documentation states that this function should work on all platforms")
+        .join("harmonia");
+    std::fs::create_dir_all(&path).unwrap();
+    path
+}
+
 impl AppState {
     fn new(port: u16) -> Self {
         Self {
@@ -139,6 +149,8 @@ impl AppState {
 }
 
 #[derive(Parser, Debug)]
+#[command(version = format!("{}", Version::default()))]
+/// Harmonia is a synchronized MIDI and music player for laptop orchestra
 struct Args {
     /// Don't start link connection
     #[arg(long)]
@@ -157,19 +169,37 @@ struct Args {
     port: u16,
 }
 
-// TODO: Graceful handling of address already in use error when trying to launch web server
-// TODO: On CTRL-C (and Windows equavilent) send NoteOff messages for currently raised notes
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
+fn setup_logging_system() {
+    let log_path = data_path().join(
+        chrono::Local::now()
+            .format("harmonia_%Y%m%d_%H%M%S.log")
+            .to_string(),
+    );
+
+    let log_file = File::create(&log_path).unwrap();
 
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "harmonia=info".into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer().and_then(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(Arc::new(log_file)),
+            ),
+        )
         .init();
+
+    info!("log in {log_path:?}");
+}
+
+// TODO: On CTRL-C (and Windows equavilent) send NoteOff messages for currently raised notes
+#[tokio::main]
+async fn main() -> ExitCode {
+    let args = Args::parse();
+    setup_logging_system();
 
     info!("starting up version {}", Version::default());
 
@@ -227,9 +257,14 @@ async fn main() {
     let ip: IpAddr = args.ip.parse().unwrap();
 
     let addr = SocketAddr::from((ip, args.port));
-    info!("listening on http://{addr}");
-    let server =
-        axum::Server::bind(&addr).serve(app.into_make_service_with_connect_info::<SocketAddr>());
+
+    let Ok(builder) = axum::Server::try_bind(&addr) else {
+        error!("Address already in use at http://{addr}");
+        return ExitCode::FAILURE;
+    };
+
+    info!("Listening on http://{addr}");
+    let server = builder.serve(app.into_make_service_with_connect_info::<SocketAddr>());
 
     if args.open {
         info!("opening UI in default browser");
@@ -238,6 +273,7 @@ async fn main() {
 
     server.await.unwrap();
     app_state.link.enable(false);
+    ExitCode::SUCCESS
 }
 
 async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
