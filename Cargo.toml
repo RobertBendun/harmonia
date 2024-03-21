@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 build = "src/build.rs"
 default-run = "harmonia"
+authors = ["Robert Bendun <robert@bendun.cc>"]
+license-file = "LICENSE"
+description = "Synchronized MIDI and audio player for laptop orchestra"
 
 [[bin]]
 name = "harmonia"
@@ -35,7 +38,7 @@ midly = "0.5.3"
 open = "5.0.0"
 serde = { version = "1.0.188", features = ["derive"] }
 sha1 = "0.10.6"
-tokio = { version = "1.32.0", features = ["full"] }
+tokio = { version = "1.32.0", features = ["rt-multi-thread", "signal", "net", "time", "macros"] }
 tower = "0.4.13"
 tower-http = { version = "0.4.4", features = ["fs", "trace"] }
 tracing = "0.1.37"
@@ -50,7 +53,6 @@ socket2 = { version = "0.5.5", features = ["all"] }
 clap = { version = "4.5.3", features = ["derive", "string"] }
 gethostname = "0.4.3"
 chrono = "0.4.35"
-ctrlc = "3.4.4"
 
 [dependencies.uuid]
 version = "1.4.1"

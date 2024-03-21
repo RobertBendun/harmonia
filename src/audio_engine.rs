@@ -19,6 +19,7 @@ pub struct AudioEngine {
     work_in: mpsc::SyncSender<Request>,
 }
 
+#[derive(Debug)]
 enum Request {
     Quit,
     Interrupt,
@@ -29,6 +30,12 @@ struct RequestPlay {
     output: MidiOutputConnection,
     uuid: String,
     app_state: Arc<AppState>,
+}
+
+impl std::fmt::Debug for RequestPlay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RequestPlay {{ uuid: {uuid:?} }}", uuid = self.uuid)
+    }
 }
 
 // More info on timing:
@@ -206,6 +213,8 @@ impl Default for AudioEngine {
 
         let worker = std::thread::spawn(move || {
             while let Ok(request) = work.recv() {
+                info!("received request: {request:?}");
+
                 if let Some(interrupt) = interrupt.take() {
                     *interrupt.0.lock().unwrap() = true;
                     interrupt.1.notify_one();
@@ -213,6 +222,7 @@ impl Default for AudioEngine {
                         current_worker.join().unwrap();
                     }
                 }
+
 
                 // Written verbosely to give compiler ability to warn when Request gets another
                 // option

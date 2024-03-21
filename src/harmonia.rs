@@ -195,18 +195,6 @@ fn setup_logging_system() {
     info!("log in {log_path:?}");
 }
 
-fn setup_ctrlc_handler(app_state: Arc<AppState>) {
-    ctrlc::set_handler(move || {
-        // TODO: Gracefull shutdown of web server
-        // https://docs.rs/tokio/latest/tokio/signal/fn.ctrl_c.html
-        // https://github.com/tokio-rs/axum/blob/main/examples/graceful-shutdown/src/main.rs
-        // https://docs.rs/hyper/0.14.28/hyper/server/struct.Server.html#method.with_graceful_shutdown
-        audio_engine::quit(app_state.clone());
-        std::process::exit(/* SIGINT */ 130);
-    })
-    .expect("we cannot control CTRL-C -_-");
-}
-
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
@@ -223,8 +211,6 @@ async fn main() -> ExitCode {
             count = app_state.sources.read().unwrap().len()
         )
     }
-
-    setup_ctrlc_handler(app_state.clone());
 
     app_state.audio_engine.write().unwrap().state = Arc::downgrade(&app_state);
     app_state.link.enable(!args.disable_link);
@@ -277,7 +263,27 @@ async fn main() -> ExitCode {
     };
 
     info!("Listening on http://{addr}");
-    let server = builder.serve(app.into_make_service_with_connect_info::<SocketAddr>());
+    let server = builder.serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(async {
+            let ctrl_c = async {
+                tokio::signal::ctrl_c().await.expect("failed to install CTRL-C handler -_-")
+            };
+
+            #[cfg(unix)]
+            let terminate = async {
+                use tokio::signal::unix::{SignalKind, signal};
+                signal(SignalKind::terminate())
+                    .expect("failed to install terminate signal handler -_-").recv().await
+            };
+
+            #[cfg(not(unix))]
+            let terminate = std::future::pending::<()>();
+
+            tokio::select! {
+                _ = ctrl_c => {},
+                _ = terminate => {},
+            }
+        });
 
     if args.open {
         info!("opening UI in default browser");
@@ -285,6 +291,7 @@ async fn main() -> ExitCode {
     }
 
     server.await.unwrap();
+    audio_engine::quit(app_state.clone());
     app_state.link.enable(false);
     ExitCode::SUCCESS
 }
