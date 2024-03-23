@@ -741,7 +741,6 @@ dependencies = [
  "rusty_link",
  "serde",
  "sha1",
- "socket2",
  "tokio",
  "tower",
  "tower-http",
