@@ -263,17 +263,22 @@ async fn main() -> ExitCode {
     };
 
     info!("Listening on http://{addr}");
-    let server = builder.serve(app.into_make_service_with_connect_info::<SocketAddr>())
+    let server = builder
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async {
             let ctrl_c = async {
-                tokio::signal::ctrl_c().await.expect("failed to install CTRL-C handler -_-")
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("failed to install CTRL-C handler -_-")
             };
 
             #[cfg(unix)]
             let terminate = async {
-                use tokio::signal::unix::{SignalKind, signal};
+                use tokio::signal::unix::{signal, SignalKind};
                 signal(SignalKind::terminate())
-                    .expect("failed to install terminate signal handler -_-").recv().await
+                    .expect("failed to install terminate signal handler -_-")
+                    .recv()
+                    .await
             };
 
             #[cfg(not(unix))]

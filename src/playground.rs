@@ -1,9 +1,8 @@
-use std::time::Duration;
-
 use linky_start::StartListSession;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -12,9 +11,8 @@ fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let _session = StartListSession::start_listening();
-
-    loop {
-        std::thread::sleep(Duration::from_secs(100_000));
+    let mut session = StartListSession::listen();
+    if let Some(task) = session.listener.take() {
+        let _ = task.await;
     }
 }

@@ -223,7 +223,6 @@ impl Default for AudioEngine {
                     }
                 }
 
-
                 // Written verbosely to give compiler ability to warn when Request gets another
                 // option
                 let request = match request {

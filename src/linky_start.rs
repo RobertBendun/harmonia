@@ -1,32 +1,28 @@
 use std::{
-    mem::MaybeUninit,
-    net::{Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{atomic::AtomicBool, Arc, Barrier, RwLock},
-    thread::JoinHandle,
-    time::Duration,
 };
 
-use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tracing::info;
 
 pub struct StartListSession {
     #[allow(dead_code)]
     state: StatePtr,
     quit: Arc<AtomicBool>,
-    listener: Option<JoinHandle<()>>,
+    pub listener: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Drop for StartListSession {
     fn drop(&mut self) {
         self.quit.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(listener) = self.listener.take() {
-            listener.join().unwrap();
+            tokio::spawn(async move { listener.await.unwrap() });
         }
     }
 }
 
 impl StartListSession {
-    pub fn start_listening() -> Self {
+    pub fn listen() -> Self {
         let state = Arc::new(RwLock::new(Default::default()));
         let init_end = Arc::new(Barrier::new(2));
         let quit = Arc::new(AtomicBool::new(false));
@@ -35,12 +31,9 @@ impl StartListSession {
         let session = Self {
             state: state.clone(),
             quit: quit.clone(),
-            listener: Some(
-                std::thread::Builder::new()
-                    .name("linky_start_listener".to_string())
-                    .spawn(move || listen(state, init_end, quit))
-                    .expect("initialization of listener"),
-            ),
+            listener: Some(tokio::spawn(
+                async move { listen(state, init_end, quit).await },
+            )),
         };
 
         // Wait so listener can setup all that it needs
@@ -50,7 +43,7 @@ impl StartListSession {
 }
 
 struct State {
-    addr: SockAddr,
+    addr: SocketAddr,
 }
 
 type StatePtr = Arc<RwLock<State>>;
@@ -61,50 +54,38 @@ impl Default for State {
         let ip = Ipv4Addr::new(224, 76, 78, 75).into();
         let port = 30808;
         Self {
-            addr: SocketAddr::new(ip, port).into(),
+            addr: SocketAddr::new(ip, port),
         }
     }
 }
 
 // TODO: Use tokio runtime?
 // Testing with Bash: echo "foo" > /dev/udp/224.76.78.75/30808
-fn listen(session: StatePtr, init_end: Arc<Barrier>, quit: Arc<AtomicBool>) {
-    let _log = tracing::span!(tracing::Level::INFO, "liblinkystart").entered();
-
+async fn listen(session: StatePtr, init_end: Arc<Barrier>, quit: Arc<AtomicBool>) {
     // TODO: Shouldn't this initialization be inside of original thread to nicely bubble up errors?
-    let session_locked = session.read().unwrap();
+    let socket_addr = session.read().unwrap().addr;
+    let IpAddr::V4(multicast) = session.read().unwrap().addr.ip() else {
+        unreachable!();
+    };
 
-    let socket =
-        Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).expect("socket creation");
+    let socket = tokio::net::UdpSocket::bind(socket_addr)
+        .await
+        .expect("socket creation");
 
     socket
-        .set_read_timeout(Some(Duration::from_millis(50)))
-        .expect("setting socket read timeout");
-
-    let multicast = session_locked.addr.as_socket_ipv4().unwrap();
-    socket
-        .join_multicast_v4(multicast.ip(), &Ipv4Addr::new(0, 0, 0, 0))
-        // TODO: Why this could fail?
-        .expect("joining multicast");
-
-    socket.bind(&session_locked.addr).expect("socket bind");
+        .join_multicast_v4(multicast, Ipv4Addr::new(0, 0, 0, 0))
+        .expect("joining multicast group");
 
     info!("listening on {multicast}");
-
     init_end.wait();
 
     // TODO: Interruptible loop
     while !quit.load(std::sync::atomic::Ordering::Relaxed) {
         let mut buf = [0u8; 32 * 1024]; // 32 kiB should be enough for everyone
-                                        // Stolen from https://docs.rs/socket2/latest/aarch64-linux-android/src/socket2/socket.rs.html#2042
-                                        // For current Rust stable I think this is best solution
-                                        // In the future this https://doc.rust-lang.org/stable/std/mem/union.MaybeUninit.html#method.slice_assume_init_mut
-                                        // probably should be used
-        let buf_uninit = unsafe { &mut *(&mut buf as *mut [u8] as *mut [MaybeUninit<u8>]) };
-        match socket.recv_from(buf_uninit) {
+        match socket.recv_from(&mut buf).await {
             Ok((len, remote_addr)) => {
                 assert!(remote_addr.is_ipv4());
-                let remote_addr = remote_addr.as_socket_ipv4().unwrap();
+                let remote_addr = remote_addr.ip();
                 let _ = tracing::span!(
                     tracing::Level::INFO,
                     "response",
@@ -127,7 +108,5 @@ fn listen(session: StatePtr, init_end: Arc<Barrier>, quit: Arc<AtomicBool>) {
 
 #[test]
 fn test_defaults() {
-    let def = State::default();
-    let ip = def.addr.as_socket_ipv4().unwrap();
-    assert!(ip.ip().is_multicast());
+    assert!(State::default().addr.ip().is_multicast());
 }
