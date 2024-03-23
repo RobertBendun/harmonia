@@ -15,17 +15,17 @@ bench = false
 path = "src/harmonia.rs"
 
 [[bin]]
-name = "linky_start"
+name = "linky_groups"
 test = false
 bench = false
 path = "src/playground.rs"
 
 [lib]
-name = "linky_start"
+name = "linky_groups"
 crate-type = ["lib"]
 test = true
 bench = false
-path = "src/linky_start.rs"
+path = "src/linky_groups.rs"
 
 [dependencies]
 axum = { version = "0.6.20", features = ["ws", "headers", "multipart", "macros"] }
@@ -38,7 +38,7 @@ midly = "0.5.3"
 open = "5.0.0"
 serde = { version = "1.0.188", features = ["derive"] }
 sha1 = "0.10.6"
-tokio = { version = "1.32.0", features = ["rt-multi-thread", "signal", "net", "time", "macros"] }
+tokio = { version = "1.32.0", features = ["rt-multi-thread", "signal", "net", "time", "macros", "sync"] }
 tower = "0.4.13"
 tower-http = { version = "0.4.4", features = ["fs", "trace"] }
 tracing = "0.1.37"
@@ -52,6 +52,9 @@ dirs = "5.0.1"
 clap = { version = "4.5.3", features = ["derive", "string"] }
 gethostname = "0.4.3"
 chrono = "0.4.35"
+tokio-util = { version = "0.7.10", features = ["net", "codec"] }
+bincode = "1.3.3"
+socket2 = "0.5.6"
 
 [dependencies.uuid]
 version = "1.4.1"
