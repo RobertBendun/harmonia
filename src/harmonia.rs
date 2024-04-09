@@ -318,7 +318,7 @@ async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
     interfaces.sort_by(|(if1, _), (if2, _)| if1.cmp(if2));
 
     let hostname = gethostname::gethostname();
-    let hostname = hostname.to_string_lossy().to_owned();
+    let hostname = hostname.to_string_lossy();
 
     html! {
         details {

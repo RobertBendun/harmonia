@@ -1074,7 +1074,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c2a198fb6b0eada2a8df47933734e6d35d350665a33a3593d7164fa52c75c19"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.4",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -1663,7 +1663,7 @@ checksum = "7ffc183a10b4478d04cbbbfc96d0873219d962dd5accaff2ffbd4ceb7df837f4"
 [[package]]
 name = "rusty_link"
 version = "0.4.2"
-source = "git+https://github.com/RobertBendun/rusty_link.git?branch=harmonia/main#b6d35404f4760d4d21fa5ee1880f866cb6f42dc7"
+source = "git+https://github.com/RobertBendun/rusty_link.git?branch=harmonia/main#14cfc9c0c376cb1782f198502f3068ddaa9d74cc"
 dependencies = [
  "bindgen",
  "cmake",

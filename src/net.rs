@@ -51,7 +51,7 @@ impl Sockets {
                 loop {
                     // TODO: This may fail for legitimate reasons, so don't just unwrap it.
                     let (len, remote) = socket.recv_from(&mut buf).await.unwrap();
-                    let frame: crate::GroupFrame = match bincode::deserialize(&mut buf[..len]) {
+                    let frame: crate::GroupFrame = match bincode::deserialize(&buf[..len]) {
                         Ok(v) => v,
                         Err(err) => {
                             tracing::error!("Failed to decode bincoded GroupFrame: {err}");
