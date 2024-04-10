@@ -11,12 +11,20 @@ impl Sockets {
     /// Why bind to all interfaces? From testing binding to 0.0.0.0 will make OS bind to the
     /// gateway interface. For this reason connection from for example host to vm will not work
     pub fn bind() -> Self {
-        Self {
-            sockets: get_current_ipv4_addresses()
-                .into_iter()
-                .map(|addr| Arc::new(open_multicast(addr)))
-                .collect(),
-        }
+        let sockets: Vec<_> = get_current_ipv4_addresses()
+            .into_iter()
+            .filter_map(|addr| match open_multicast(addr) {
+                Ok(socket) => Some(Arc::new(socket)),
+                Err(error) => {
+                    tracing::error!(
+                        "failed to open multicast socket for interface {addr}: {error}"
+                    );
+                    None
+                }
+            })
+            .collect();
+        assert!(sockets.len() > 0);
+        Self { sockets }
     }
 
     pub async fn send(&self, frame: crate::GroupFrame) {
@@ -102,7 +110,7 @@ fn multicast() -> std::net::SocketAddr {
 }
 
 // TODO: Support IPv6
-fn open_multicast(interface: Ipv4Addr) -> tokio::net::UdpSocket {
+fn open_multicast(interface: Ipv4Addr) -> std::io::Result<tokio::net::UdpSocket> {
     let multicast = multicast();
 
     let socket = socket2::Socket::new(
@@ -112,23 +120,17 @@ fn open_multicast(interface: Ipv4Addr) -> tokio::net::UdpSocket {
     )
     .expect("socket creation");
 
-    socket.set_multicast_if_v4(&interface).unwrap();
-    socket.set_nonblocking(true).unwrap();
-    socket.set_reuse_address(true).unwrap();
-    socket
-        .set_read_timeout(Some(std::time::Duration::from_secs_f64(0.1)))
-        .unwrap();
-    socket
-        .set_multicast_loop_v4(interface.is_loopback())
-        .unwrap();
+    socket.set_multicast_if_v4(&interface)?;
+    socket.set_nonblocking(true)?;
+    socket.set_reuse_address(true)?;
+    socket.set_read_timeout(Some(std::time::Duration::from_secs_f64(0.1)))?;
+    socket.set_multicast_loop_v4(interface.is_loopback())?;
 
     let IpAddr::V4(address) = multicast.ip() else {
         unreachable!();
     };
-    socket.join_multicast_v4(&address, &interface).unwrap();
-    socket
-        .bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, multicast.port()).into())
-        .unwrap();
+    socket.join_multicast_v4(&address, &interface)?;
+    socket.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, multicast.port()).into())?;
 
-    tokio::net::UdpSocket::from_std(socket.into()).unwrap()
+    Ok(tokio::net::UdpSocket::from_std(socket.into()).unwrap())
 }

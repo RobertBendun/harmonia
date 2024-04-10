@@ -93,12 +93,18 @@ impl Groups {
         let host_time = self.link.clock_micros();
         let ghost_time = self.link.host_to_ghost(host_time);
         let frame = GroupFrame::new(group_id, ghost_time);
-        self.actions.send(Action::Start(frame)).await.expect("receiver will never be closed unless in destructor");
+        self.actions
+            .send(Action::Start(frame))
+            .await
+            .expect("receiver will never be closed unless in destructor");
         Ok(())
     }
 
     pub async fn stop(&self) {
-        self.actions.send(Action::Stop).await.expect("receiver will never be closed unless in destructor");
+        self.actions
+            .send(Action::Stop)
+            .await
+            .expect("receiver will never be closed unless in destructor");
     }
 
     pub fn is_playing(&self) -> bool {
@@ -180,7 +186,6 @@ async fn negotatior(
 
                             let mut session_state = SessionState::new();
                             link.capture_app_session_state(&mut session_state);
-
 
                             let beat_difference =
                                 session_state.beat_at_time(foreign_host_time, QUANTUM);
