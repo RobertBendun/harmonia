@@ -60,12 +60,13 @@ async fn audio_engine_main(
     let mut session_state = SessionState::new();
     let quantum = 1.0;
 
-
     if midi_source.group.is_empty() {
+        tracing::info!("Empty group, starting using request_beat_at_time");
         app_state.link.capture_app_session_state(&mut session_state);
         session_state.request_beat_at_time(0.0, app_state.link.clock_micros(), quantum);
         app_state.link.commit_app_session_state(&session_state);
     } else {
+        tracing::info!("Starting with group: {group:?}", group = midi_source.group);
         app_state.groups.as_ref().unwrap().start(&midi_source.group).await.unwrap();
     }
 

@@ -124,6 +124,7 @@ impl Groups {
     }
 }
 
+#[derive(Debug)]
 enum Action {
     /// Start playing in the provided group
     Start(GroupFrame),
@@ -164,6 +165,8 @@ async fn negotatior(
         };
 
         if let Some(request) = request {
+            tracing::debug!("Negotatior received request: {request:?}");
+
             match request {
                 Action::Start(frame) => {
                     current_group = Some(frame);
