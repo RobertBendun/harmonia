@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::BufReader,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, SocketAddr, Ipv4Addr},
     path::PathBuf,
     process::ExitCode,
     sync::{Arc, RwLock},
@@ -272,7 +272,13 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
-    info!("Listening on http://{addr}");
+    let display_address = if addr.ip().is_unspecified() {
+        SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), addr.port())
+    } else {
+        addr.clone()
+    };
+
+    info!("Listening on http://{display_address}");
     let server = builder
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async {
@@ -302,7 +308,7 @@ async fn main() -> ExitCode {
 
     if args.open {
         info!("opening UI in default browser");
-        open::that_detached(format!("http://{addr}")).unwrap();
+        open::that_detached(format!("http://{display_address}")).unwrap();
     }
 
     server.await.unwrap();
