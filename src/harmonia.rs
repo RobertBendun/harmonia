@@ -30,10 +30,7 @@ use midir::{MidiOutput, MidiOutputPort};
 use midly::SmfBytemap;
 use rusty_link::{AblLink, SessionState};
 use serde::{Deserialize, Serialize};
-use tower_http::{
-    services::ServeDir,
-    trace::{DefaultMakeSpan, TraceLayer},
-};
+use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
@@ -45,6 +42,8 @@ mod audio_engine;
 use audio_engine::AudioEngine;
 mod version;
 use version::Version;
+
+mod public;
 
 const STATE_PATH: &str = "harmonia_state.bson";
 
@@ -223,13 +222,13 @@ async fn main() -> ExitCode {
         }
     );
 
-    let public_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("public");
+    async fn htmx_js()  -> impl IntoResponse { public::File("htmx.min.js") }
+    async fn index_js() -> impl IntoResponse { public::File("index.js") }
 
     // Conventions:
     //   Paths begining with /api/ are meant for JavaScript
     //   Others are for HTML / HTMLX consumption
     let app = Router::new()
-        .fallback_service(ServeDir::new(public_dir))
         .route(
             "/api/link-status-websocket",
             get(link_status_websocket_handler),
@@ -247,6 +246,8 @@ async fn main() -> ExitCode {
         .route("/version", get(version_handler))
         .route("/midi/interrupt", post(midi_interrupt))
         .route("/", get(index_handler))
+        .route("/htmx.min.js", get(htmx_js))
+        .route("/index.js", get(index_js))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
