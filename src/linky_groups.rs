@@ -4,7 +4,9 @@ use std::{sync::atomic, sync::Arc};
 
 mod net;
 
-type GroupId = [u8; 15];
+pub const MAX_GROUP_ID_LENGTH: usize = 15;
+
+type GroupId = [u8; MAX_GROUP_ID_LENGTH];
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 struct GroupFrame {
@@ -83,6 +85,7 @@ pub enum Error {
 }
 
 impl Groups {
+    // TODO: To avoid confusion make group_id_str case insensitive.
     pub async fn start(&self, group_id_str: &str) -> Result<(), Error> {
         let mut group_id: GroupId = Default::default();
         if group_id_str.len() > group_id.len() {

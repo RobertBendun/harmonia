@@ -47,12 +47,17 @@ mod public;
 
 const STATE_PATH: &str = "harmonia_state.bson";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct MidiSource {
     pub bytes: Vec<u8>,
     pub file_name: String,
     pub associated_port: usize,
     pub keybind: String,
+
+    /// Group in which MIDI Source should be played
+    ///
+    /// Empty means any group, max 15 chars.
+    pub group: String,
 }
 
 impl MidiSource {
@@ -89,12 +94,13 @@ impl MidiConnection {
 pub struct AppState {
     pub sources: RwLock<MidiSources>,
     pub connection: RwLock<MidiConnection>,
-    pub link: AblLink,
+    pub link: Arc<AblLink>,
     pub audio_engine: RwLock<AudioEngine>,
     // TODO: Be better
     pub currently_playing_uuid: RwLock<Option<String>>,
     pub current_playing_progress: RwLock<(usize, usize)>,
     pub port: u16,
+    pub groups: Option<linky_groups::Groups>,
 }
 
 fn cache_path() -> PathBuf {
@@ -115,14 +121,16 @@ fn data_path() -> PathBuf {
 
 impl AppState {
     fn new(port: u16) -> Self {
+        let link = Arc::new(AblLink::new(120.));
         Self {
             sources: Default::default(),
             connection: Default::default(),
-            link: AblLink::new(120.),
+            link: link.clone(),
             audio_engine: Default::default(),
             currently_playing_uuid: Default::default(),
             current_playing_progress: Default::default(),
             port,
+            groups: Some(linky_groups::listen(link)),
         }
     }
 
@@ -242,6 +250,7 @@ async fn main() -> ExitCode {
         .route("/midi/play/:uuid", post(midi_play_source_handler))
         .route("/midi/ports", get(midi_list_ports_handler))
         .route("/midi/set-port/:uuid", post(midi_set_port_for_source))
+        .route("/midi/set-group/:uuid", post(midi_set_group_for_source))
         .route("/midi/set-keybind/:uuid", post(midi_set_keybind_for_source))
         .route("/version", get(version_handler))
         .route("/midi/interrupt", post(midi_interrupt))
@@ -297,8 +306,9 @@ async fn main() -> ExitCode {
     }
 
     server.await.unwrap();
-    audio_engine::quit(app_state.clone());
+    audio_engine::quit(app_state.clone()).await;
     app_state.link.enable(false);
+    // TODO: app_state.groups.take().expect("we are first to clean up this field so value should be here").shutdown().await;
     ExitCode::SUCCESS
 }
 
@@ -376,7 +386,7 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
             "Active: "; (active);
             ", BPM: ";    (session_state.tempo());
             ", beat: "; (beat);
-            ", playing: "; (session_state.is_playing());
+            ", playing: "; (app_state.groups.as_ref().unwrap().is_playing());
         }
         @if let Some(currently_playing) = &*currently_playing {
             div {
@@ -394,13 +404,14 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     }
 }
 
+// TODO:  This triplets of {SetX, midi_set_x_for_source, render_x_cell} maybe should be
+// consolidated
+
 #[derive(Deserialize)]
 struct SetPort {
     pub port: usize,
 }
 
-// TODO: Implement better response. For example respond with partial HTML that would contain error
-// message
 async fn midi_set_port_for_source(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
@@ -430,6 +441,45 @@ async fn midi_set_port_for_source(
     info!("setting port {port} for {uuid}");
     midi_source.associated_port = port - 1;
     Ok(render_port_cell(&uuid, midi_source.associated_port, None))
+}
+
+#[derive(Deserialize)]
+struct SetGroup {
+    pub group: String,
+}
+
+async fn midi_set_group_for_source(
+    app_state: State<Arc<AppState>>,
+    Path(uuid): Path<String>,
+    Form(SetGroup { group }): Form<SetGroup>,
+) -> Result<Markup, StatusCode> {
+    let response = {
+        let mut midi_sources = app_state.sources.write().unwrap();
+
+        let Some(midi_source) = midi_sources.get_mut(&uuid) else {
+            error!("{uuid} not found");
+            return Err(StatusCode::NOT_FOUND);
+        };
+
+        // TODO: Unnesesary string allocation
+        midi_source.group = if group.bytes().count() > linky_groups::MAX_GROUP_ID_LENGTH {
+            let mut cut = linky_groups::MAX_GROUP_ID_LENGTH;
+            while !group.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            &group[..cut]
+        } else {
+            &group[..]
+        }.to_owned();
+
+        tracing::info!("Switched midi source {uuid} to group {group:?}", group = midi_source.group);
+        Ok(render_group_cell(&uuid, &midi_source.group))
+    };
+
+    if let Err(err) = app_state.remember_current_sources() {
+        error!("midi_add_handler failed to remember current sources: {err:#}")
+    }
+    response
 }
 
 #[derive(Deserialize)]
@@ -505,6 +555,7 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                 th { "Filename" }
                 th { "Info" }
                 th { "Associated port" }
+                th { "Group" }
                 th { "Keybind" }
                 th { "Controls" }
             }
@@ -535,6 +586,9 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                         }
                         td {
                             (render_port_cell(uuid, source.associated_port, None));
+                        }
+                        td {
+                            (render_group_cell(uuid, &source.group));
                         }
                         td {
                             input
@@ -591,6 +645,18 @@ fn render_port_cell(uuid: &str, associated_port: usize, error_message: Option<St
             }
 
         }
+    }
+}
+
+fn render_group_cell(uuid: &str, group: &str) -> Markup {
+    html! {
+        input
+            type="text" value=(group)
+            pattern=(format!("(\\w| ){{0,{}}}", linky_groups::MAX_GROUP_ID_LENGTH))
+            maxlength=(linky_groups::MAX_GROUP_ID_LENGTH)
+            name="group"
+            hx-target="closest td"
+            hx-post=(format!("/midi/set-group/{uuid}"));
     }
 }
 
@@ -694,11 +760,12 @@ async fn midi_list_ports_handler(State(app_state): State<Arc<AppState>>) -> Mark
     }
 }
 
+#[axum::debug_handler]
 async fn midi_play_source_handler(
     State(app_state): State<Arc<AppState>>,
     Path(uuid): Path<String>,
 ) -> Markup {
-    let started_playing = audio_engine::play(app_state.clone(), &uuid);
+    let started_playing = audio_engine::play(app_state.clone(), &uuid).await;
     render_play_cell(
         &uuid,
         if let Err(error_message) = started_playing {
@@ -733,6 +800,7 @@ async fn midi_add_new_source_handler(
             file_name: file_name.clone(),
             associated_port: 0,
             keybind: Default::default(),
+            group: Default::default(),
         };
 
         let midi_sources = &mut app_state.sources.write().unwrap();

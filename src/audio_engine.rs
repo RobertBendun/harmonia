@@ -1,6 +1,5 @@
 use std::{
-    sync::{mpsc, Arc, Condvar, Mutex, Weak},
-    thread::JoinHandle,
+    sync::{Arc, Weak},
     time::Duration,
 };
 
@@ -15,8 +14,8 @@ pub struct AudioEngine {
     pub state: Weak<AppState>,
     // TODO: Sefely join and destroy this thread using some sort of contition variable
     // synchronization to break it's work and then join to wait until work is finished.
-    worker: Option<JoinHandle<()>>,
-    work_in: mpsc::SyncSender<Request>,
+    worker: Option<tokio::task::JoinHandle<()>>,
+    work_in: tokio::sync::mpsc::Sender<Request>,
 }
 
 #[derive(Debug)]
@@ -40,9 +39,9 @@ impl std::fmt::Debug for RequestPlay {
 
 // More info on timing:
 // https://majicdesigns.github.io/MD_MIDIFile/page_timing.html
-fn audio_engine_main(
+async fn audio_engine_main(
     request_play: RequestPlay,
-    interrupts: &(Mutex<bool>, Condvar),
+    interrupts: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
 ) -> Result<(), String> {
     let RequestPlay {
         mut output,
@@ -50,191 +49,203 @@ fn audio_engine_main(
         app_state,
     } = request_play;
 
-    // TODO: Find better solution then checking two times if we have this source
-    let midi_sources = app_state.sources.read().unwrap();
-    let Some(midi_source) = midi_sources.get(&uuid) else {
-        return Err(format!("{uuid} not found. Try reloading page"));
-    };
-
-    let midi = midi_source
-        .midi()
-        .map_err(|err| format!("failed to parse midi: {err}"))?;
-
-    let ticks_per_quater_note = match midi.header.timing {
-        midly::Timing::Metrical(tpqn) => tpqn.as_int(),
-        _ => {
-            output.close();
-            return Err("Timecode timing format is not supported".to_string());
-        }
+    let midi_source = {
+        let midi_sources = app_state.sources.read().unwrap();
+        let Some(midi_source) = midi_sources.get(&uuid) else {
+            return Err(format!("{uuid} not found. Try reloading page"));
+        };
+        midi_source.clone()
     };
 
     let mut session_state = SessionState::new();
-    let quantum = 4.0;
+    let quantum = 1.0;
 
-    *app_state.currently_playing_uuid.write().unwrap() = Some(uuid.to_string());
-    *app_state.current_playing_progress.write().unwrap() =
-        (0_usize, midi.tracks.last().unwrap().len());
-    info!("commiting start state");
 
-    app_state.link.capture_app_session_state(&mut session_state);
-    session_state.set_is_playing_and_request_beat_at_time(
-        true,
-        app_state.link.clock_micros() as u64,
-        0.0,
-        quantum,
-    );
-    app_state.link.commit_app_session_state(&session_state);
+    if midi_source.group.is_empty() {
+        app_state.link.capture_app_session_state(&mut session_state);
+        session_state.request_beat_at_time(0.0, app_state.link.clock_micros(), quantum);
+        app_state.link.commit_app_session_state(&session_state);
+    } else {
+        app_state.groups.as_ref().unwrap().start(&midi_source.group).await.unwrap();
+    }
 
-    let mut time_passed = 0.0;
-    let mut track = midi.tracks.last().unwrap().iter().enumerate();
+    tokio::task::spawn_blocking(move || {
+        // TODO: Find better solution then checking two times if we have this source
+        let midi = midi_source
+            .midi()
+            .map_err(|err| format!("failed to parse midi: {err}"))
+            .unwrap();
 
-    let mut notes_played_per_channel = [[false; 128]; 16];
+        let ticks_per_quater_note = match midi.header.timing {
+            midly::Timing::Metrical(tpqn) => tpqn.as_int(),
+            _ => {
+                output.close();
+                panic!("Timecode timing format is not supported");
+            }
+        };
+        *app_state.currently_playing_uuid.write().unwrap() = Some(uuid.to_string());
+        *app_state.current_playing_progress.write().unwrap() =
+            (0_usize, midi.tracks.last().unwrap().len());
+        info!("commiting start state");
 
-    'audio_loop: loop {
-        let Some((nth, (bytes, event))) = track.next() else {
-            break;
+
+        let mut time_passed = 0.0;
+        let mut track = midi.tracks.last().unwrap().iter().enumerate();
+
+        let mut notes_played_per_channel = [[false; 128]; 16];
+
+        'audio_loop: loop {
+            let Some((nth, (bytes, event))) = track.next() else {
+                break;
+            };
+
+            *app_state.current_playing_progress.write().unwrap() =
+                (nth, midi.tracks.last().unwrap().len());
+
+            let (interrupt, interruptable_sleep) = &*interrupts;
+            let interrupted = interrupt.try_lock().map(|x| *x).unwrap_or(false);
+            if interrupted {
+                break;
+            }
+
+            let time_to_wait = event.delta.as_int() as f64 / ticks_per_quater_note as f64;
+            time_passed += time_to_wait;
+
+            // TODO: Rust makes a note that condvar shouldn't be use in time critical applications?
+            loop {
+                app_state.link.capture_app_session_state(&mut session_state);
+                let current_time = session_state.beat_at_time(app_state.link.clock_micros(), quantum);
+
+                info!("[passed={time_passed}, current={current_time}] {event:?}");
+                if current_time >= time_passed {
+                    break;
+                }
+
+                let sleep_time = (time_passed - current_time) / 120.0 * 60.0;
+                let guard = interrupt.lock().unwrap();
+                let (interrupted, sleep_result) = interruptable_sleep
+                    .wait_timeout(guard, Duration::from_secs_f64(sleep_time))
+                    .unwrap();
+                if *interrupted {
+                    break 'audio_loop;
+                }
+                if sleep_result.timed_out() {
+                    break;
+                }
+            }
+
+            match event.kind {
+                midly::TrackEventKind::Meta(meta) => match meta {
+                    // http://midi.teragonaudio.com/tech/midifile/ppqn.htm
+                    midly::MetaMessage::Tempo(tempo) => {
+                        let tempo: f32 = 60_000_000.0 / (tempo.as_int() as f32);
+                        info!("changing tempo to {}", tempo)
+                    }
+
+                    // http://midi.teragonaudio.com/tech/midifile/time.htm
+                    midly::MetaMessage::TimeSignature(num, den, _, _) => {
+                        info!(
+                            "time signature is: {num}/{den}",
+                            den = 2_usize.pow(den.into())
+                        )
+                    }
+
+                    // These are obligatory at the end of track so we don't need to handle them
+                    midly::MetaMessage::EndOfTrack => {}
+                    msg => {
+                        warn!("unknown meta message: {msg:?}")
+                    }
+                },
+                midly::TrackEventKind::Midi { channel, message } => match message {
+                    // TODO: Remember currenlty played notes so we can unwind this musical stack when
+                    // we turn it off.
+                    midly::MidiMessage::NoteOn { key, vel } => {
+                        notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] =
+                            vel != 0;
+                        output.send(bytes).unwrap();
+                    }
+                    midly::MidiMessage::NoteOff { key, .. } => {
+                        notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] =
+                            false;
+                        output.send(bytes).unwrap();
+                    }
+                    msg => {
+                        warn!("unknown midi message: {msg:?}")
+                    }
+                },
+                midly::TrackEventKind::SysEx(_) => {
+                    // TODO: They should probably be forwarded
+                    warn!("sysex messages are not handled yet");
+                }
+                midly::TrackEventKind::Escape(_) => {
+                    // TODO: They should probably be forwarded
+                    warn!("escape messages are not handled yet");
+                }
+            }
+        }
+
+        let task = {
+            let app_state = app_state.clone();
+            tokio::spawn(async move {
+                app_state.groups.as_ref().unwrap().stop().await
+            })
         };
 
-        *app_state.current_playing_progress.write().unwrap() =
-            (nth, midi.tracks.last().unwrap().len());
+        for (channel, notes) in notes_played_per_channel.iter().enumerate() {
+            for (key, played) in notes.iter().enumerate() {
+                if *played {
+                    let event = LiveEvent::Midi {
+                        channel: (channel as u8).into(),
+                        message: midly::MidiMessage::NoteOff {
+                            key: (key as u8).into(),
+                            vel: 0.into(),
+                        },
+                    };
 
-        let (interrupt, interruptable_sleep) = interrupts;
-        let interrupted = interrupt.try_lock().map(|x| *x).unwrap_or(false);
-        if interrupted {
-            break;
-        }
-
-        let time_to_wait = event.delta.as_int() as f64 / ticks_per_quater_note as f64;
-        time_passed += time_to_wait;
-
-        // TODO: Rust makes a note that condvar shouldn't be use in time critical applications?
-        loop {
-            app_state.link.capture_app_session_state(&mut session_state);
-            let current_time = session_state.beat_at_time(app_state.link.clock_micros(), quantum);
-
-            info!("[passed={time_passed}, current={current_time}] {event:?}");
-            if current_time >= time_passed {
-                break;
-            }
-
-            let sleep_time = (time_passed - current_time) / 120.0 * 60.0;
-            let guard = interrupt.lock().unwrap();
-            let (interrupted, sleep_result) = interruptable_sleep
-                .wait_timeout(guard, Duration::from_secs_f64(sleep_time))
-                .unwrap();
-            if *interrupted {
-                break 'audio_loop;
-            }
-            if sleep_result.timed_out() {
-                break;
+                    let mut buf = [0_u8; 4];
+                    event.write_std(&mut buf[..]).unwrap();
+                    output.send(&buf).unwrap();
+                }
             }
         }
 
-        match event.kind {
-            midly::TrackEventKind::Meta(meta) => match meta {
-                // http://midi.teragonaudio.com/tech/midifile/ppqn.htm
-                midly::MetaMessage::Tempo(tempo) => {
-                    let tempo: f32 = 60_000_000.0 / (tempo.as_int() as f32);
-                    info!("changing tempo to {}", tempo)
-                }
-
-                // http://midi.teragonaudio.com/tech/midifile/time.htm
-                midly::MetaMessage::TimeSignature(num, den, _, _) => {
-                    info!(
-                        "time signature is: {num}/{den}",
-                        den = 2_usize.pow(den.into())
-                    )
-                }
-
-                // These are obligatory at the end of track so we don't need to handle them
-                midly::MetaMessage::EndOfTrack => {}
-                msg => {
-                    warn!("unknown meta message: {msg:?}")
-                }
-            },
-            midly::TrackEventKind::Midi { channel, message } => match message {
-                // TODO: Remember currenlty played notes so we can unwind this musical stack when
-                // we turn it off.
-                midly::MidiMessage::NoteOn { key, vel } => {
-                    notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] =
-                        vel != 0;
-                    output.send(bytes).unwrap();
-                }
-                midly::MidiMessage::NoteOff { key, .. } => {
-                    notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] =
-                        false;
-                    output.send(bytes).unwrap();
-                }
-                msg => {
-                    warn!("unknown midi message: {msg:?}")
-                }
-            },
-            midly::TrackEventKind::SysEx(_) => {
-                // TODO: They should probably be forwarded
-                warn!("sysex messages are not handled yet");
-            }
-            midly::TrackEventKind::Escape(_) => {
-                // TODO: They should probably be forwarded
-                warn!("escape messages are not handled yet");
-            }
-        }
-    }
-
-    for (channel, notes) in notes_played_per_channel.iter().enumerate() {
-        for (key, played) in notes.iter().enumerate() {
-            if *played {
-                let event = LiveEvent::Midi {
-                    channel: (channel as u8).into(),
-                    message: midly::MidiMessage::NoteOff {
-                        key: (key as u8).into(),
-                        vel: 0.into(),
-                    },
-                };
-
-                let mut buf = [0_u8; 4];
-                event.write_std(&mut buf[..]).unwrap();
-                output.send(&buf).unwrap();
-            }
-        }
-    }
-
-    output.close();
-    *app_state.currently_playing_uuid.write().unwrap() = None;
+        output.close();
+        *app_state.currently_playing_uuid.write().unwrap() = None;
+        task
+    }).await.unwrap().await.unwrap();
     Ok(())
 }
 
 impl Default for AudioEngine {
     fn default() -> Self {
         // TODO: We assume that we handle this request relativly quickly (and thus only 1 in queue)
-        let (work_in, work) = mpsc::sync_channel(1);
+        let (work_in, mut work) = tokio::sync::mpsc::channel(1);
 
-        let mut interrupt: Option<Arc<(Mutex<bool>, Condvar)>> = None;
-        let mut current_worker: Option<JoinHandle<()>> = None;
+        let mut interrupt: Option<Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>> = None;
+        let mut current_worker: Option<tokio::task::JoinHandle<()>> = None;
 
-        let worker = std::thread::spawn(move || {
-            while let Ok(request) = work.recv() {
+        let worker = tokio::spawn(async move {
+            while let Some(request) = work.recv().await {
                 info!("received request: {request:?}");
 
                 if let Some(interrupt) = interrupt.take() {
                     *interrupt.0.lock().unwrap() = true;
                     interrupt.1.notify_one();
                     if let Some(current_worker) = current_worker.take() {
-                        current_worker.join().unwrap();
+                        current_worker.await.unwrap();
                     }
                 }
 
-                // Written verbosely to give compiler ability to warn when Request gets another
-                // option
                 let request = match request {
                     Request::Play(request) => request,
                     Request::Interrupt => continue,
                     Request::Quit => break,
                 };
 
-                interrupt = Some(Arc::new((Mutex::new(false), Condvar::new())));
+                interrupt = Some(Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())));
                 let worker_interrupt = interrupt.clone().unwrap();
-                let worker = std::thread::spawn(move || {
-                    if let Err(err) = audio_engine_main(request, &worker_interrupt) {
+                let worker = tokio::spawn(async move {
+                    if let Err(err) = audio_engine_main(request, worker_interrupt).await {
                         crate::error!("{err:#}")
                     }
                 });
@@ -250,66 +261,73 @@ impl Default for AudioEngine {
     }
 }
 
-pub fn quit(app_state: Arc<AppState>) {
+pub async fn quit(app_state: Arc<AppState>) {
     let Ok(_) = app_state
         .audio_engine
         .write()
         .unwrap()
         .work_in
         .send(Request::Quit)
+        .await
     else {
         return;
     };
 
     if let Some(worker) = app_state.audio_engine.write().unwrap().worker.take() {
-        let _ = worker.join();
+        let _ = worker.await;
     }
 }
 
-pub fn interrupt(app_state: Arc<AppState>) -> Result<(), String> {
+pub async fn interrupt(app_state: Arc<AppState>) -> Result<(), String> {
     app_state
         .audio_engine
         .write()
         .unwrap()
         .work_in
         .send(Request::Interrupt)
+        .await
         .map_err(|err| format!("failed to send job: {err}"))
 }
 
-pub fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
-    let midi_sources = app_state.sources.read().unwrap();
-    let Some(midi_source) = midi_sources.get(uuid) else {
-        return Err(format!("{uuid} not found. Try reloading page"));
+pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
+    let conn_out = {
+        let midi_sources = app_state.sources.read().unwrap();
+        let Some(midi_source) = midi_sources.get(uuid) else {
+            return Err(format!("{uuid} not found. Try reloading page"));
+        };
+
+        midi_source
+            .midi()
+            .map_err(|err| format!("failed to parse midi: {err}"))?;
+
+        let midi_out = MidiOutput::new("harmonia")
+            .map_err(|err| format!("failed to create midi output port: {err}"))?;
+
+        let midi_port = &midi_out.ports()[midi_source.associated_port];
+        info!(
+            "outputing to output port #{} named: {}",
+            midi_source.associated_port,
+            midi_out.port_name(midi_port).unwrap(),
+            );
+        midi_out
+            .connect(midi_port, /* TODO: Better name */ "play")
+            .map_err(|err| format!("failed to connect to midi port: {err}"))?
     };
 
-    midi_source
-        .midi()
-        .map_err(|err| format!("failed to parse midi: {err}"))?;
-
-    let midi_out = MidiOutput::new("harmonia")
-        .map_err(|err| format!("failed to create midi output port: {err}"))?;
-
-    let midi_port = &midi_out.ports()[midi_source.associated_port];
-    info!(
-        "outputing to output port #{} named: {}",
-        midi_source.associated_port,
-        midi_out.port_name(midi_port).unwrap(),
-    );
-    let conn_out = midi_out
-        .connect(midi_port, /* TODO: Better name */ "play")
-        .map_err(|err| format!("failed to connect to midi port: {err}"))?;
-
     // TODO: This is wrong approach, we should select what will be played, not what to play now.
-    app_state
+    let work_in = app_state
         .audio_engine
         .write()
         .unwrap()
-        .work_in
+        .work_in.clone();
+
+    work_in
         .send(Request::Play(RequestPlay {
             output: conn_out,
             uuid: uuid.to_string(),
             app_state: app_state.clone(),
         }))
+        .await
         .map_err(|err| format!("failed to send job: {err}"))?;
 
     Ok(())
