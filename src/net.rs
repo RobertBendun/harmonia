@@ -34,8 +34,8 @@ impl Sockets {
         let target = multicast();
 
         for socket in &self.sockets {
-            // TODO: Don't unwrap here, it may fail for good reasons
-            socket.send_to(&packet, target).await.unwrap();
+            // TODO: Don't ignore but ignore socket when it continously fails.
+            let _ = socket.send_to(&packet, target).await;
         }
     }
 
