@@ -555,6 +555,9 @@ async fn remove_midi_source_handler(
 async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
     let midi_sources = app_state.sources.read().unwrap();
 
+    let mut orderered_midi_sources: Vec<_> = midi_sources.iter().collect();
+    orderered_midi_sources.sort_by(|(_, lhs_source), (_, rhs_source)| lhs_source.file_name.cmp(&rhs_source.file_name));
+
     html! {
         table {
             thead {
@@ -566,7 +569,7 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                 th { "Controls" }
             }
             tbody {
-                @for (uuid, source) in midi_sources.iter() {
+                @for (uuid, source) in orderered_midi_sources.iter() {
                     tr data-uuid=(uuid) {
                         td {
                             a href=(format!("/midi/{uuid}")) {
@@ -607,14 +610,7 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
                                 value=(source.keybind);
                         }
                         td {
-                            (render_play_cell(uuid, None));
-                            button
-                                hx-delete=(format!("/midi/{uuid}"))
-                                hx-target="#midi-sources-list"
-                                hx-swap="innerHTML"
-                            {
-                                "delete"
-                            }
+                            (render_controls_cell(uuid, None));
                         }
                     }
                 }
@@ -623,12 +619,19 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
     }
 }
 
-fn render_play_cell(uuid: &str, error_message: Option<String>) -> Markup {
+fn render_controls_cell(uuid: &str, error_message: Option<String>) -> Markup {
     html! {
         button hx-target="closest td" hx-post=(format!("/midi/play/{uuid}")) {
             // https://en.wikipedia.org/wiki/Media_control_symbols
             "▶"
         }
+        button
+            hx-delete=(format!("/midi/{uuid}"))
+            hx-target="#midi-sources-list"
+            hx-swap="innerHTML"
+            {
+                "delete"
+            }
         @if let Some(error_message) = error_message {
             div style="color: red" {
                 (error_message)
@@ -699,6 +702,10 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     br;
                     "State cache: ";
                     (cache_path().join(STATE_PATH).to_str().unwrap());
+                    br;
+                    button onclick="toggle_color_scheme()" {
+                        "Toggle color scheme"
+                    }
                 }
                 main {
                     h2 { "Runtime status" }
@@ -772,7 +779,7 @@ async fn midi_play_source_handler(
     Path(uuid): Path<String>,
 ) -> Markup {
     let started_playing = audio_engine::play(app_state.clone(), &uuid).await;
-    render_play_cell(
+    render_controls_cell(
         &uuid,
         if let Err(error_message) = started_playing {
             error!("failed to play requested {uuid}: {error_message}");
