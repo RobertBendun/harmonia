@@ -111,12 +111,8 @@ fn cache_path() -> PathBuf {
     path
 }
 
-fn data_path() -> PathBuf {
-    let path = dirs::data_dir()
-        .expect("documentation states that this function should work on all platforms")
-        .join("harmonia");
-    std::fs::create_dir_all(&path).unwrap();
-    path
+fn log_path() -> PathBuf {
+    cache_path()
 }
 
 impl AppState {
@@ -176,14 +172,9 @@ struct Args {
     port: u16,
 }
 
-fn setup_logging_system() {
-    let log_path = data_path().join(
-        chrono::Local::now()
-            .format("harmonia_%Y%m%d_%H%M%S.log")
-            .to_string(),
-    );
-
-    let log_file = File::create(&log_path).unwrap();
+fn setup_logging_system() -> tracing_appender::non_blocking::WorkerGuard {
+    let log_file_appender = tracing_appender::rolling::daily(log_path(), "logs");
+    let (log_file_appender, guard) = tracing_appender::non_blocking(log_file_appender);
 
     tracing_subscriber::registry()
         .with(
@@ -194,18 +185,17 @@ fn setup_logging_system() {
             tracing_subscriber::fmt::layer().and_then(
                 tracing_subscriber::fmt::layer()
                     .with_ansi(false)
-                    .with_writer(Arc::new(log_file)),
+                    .with_writer(log_file_appender)
             ),
         )
         .init();
-
-    info!("log in {log_path:?}");
+    guard
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
-    setup_logging_system();
+    let _guard = setup_logging_system();
 
     info!("starting up version {}", Version::default());
 
