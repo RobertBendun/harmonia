@@ -14,12 +14,13 @@ Sorted by their completion & importance (if not completed yet).
 - [x] Health check
 - [x] List IPs (and maybe local names) listing
 - [x] Server state save & restore - doesn't require user to provide all files every time
-- [ ] MIDI play subsystem with Ableton/Link
+- [x] MIDI play subsystem with Ableton/Link
 - [x] Keybindings for easy play functionality
-- [ ] Visual indicator which track is playing
+- [x] Visual indicator which track is playing
 - [ ] Name association (like nick) with harmonia instance, by default hostname/username
 - [ ] Harmonia as mDNS service
 - [ ] Audio playing (wav, ogg itd)
+- [ ] SonicPI integration
 
 ## Why Rust?
 
