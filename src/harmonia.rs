@@ -369,7 +369,7 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
     let time = app_state.link.clock_micros();
 
     // TODO: Move quantum to state
-    let quantum = 4.0;
+    let quantum = 1.0;
 
     let beat = session_state.beat_at_time(time, quantum);
 
@@ -488,15 +488,22 @@ async fn midi_set_keybind_for_source(
     Path(uuid): Path<String>,
     Form(SetKeybind { keybind }): Form<SetKeybind>,
 ) -> StatusCode {
-    let mut midi_sources = app_state.sources.write().unwrap();
+    {
+        let mut midi_sources = app_state.sources.write().unwrap();
 
-    let Some(midi_source) = midi_sources.get_mut(&uuid) else {
-        error!("{uuid} not found");
-        return StatusCode::NOT_FOUND;
-    };
+        let Some(midi_source) = midi_sources.get_mut(&uuid) else {
+            error!("{uuid} not found");
+            return StatusCode::NOT_FOUND;
+        };
 
-    info!("Changing keybind for {uuid} to {keybind}");
-    midi_source.keybind = keybind;
+        info!("Changing keybind for {uuid} to {keybind}");
+        midi_source.keybind = keybind;
+    }
+
+    if let Err(err) = app_state.remember_current_sources() {
+        error!("midi_add_handler failed to remember current sources: {err:#}")
+    }
+
     StatusCode::OK
 }
 

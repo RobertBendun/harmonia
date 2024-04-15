@@ -26,7 +26,6 @@ enum Request {
 }
 
 struct RequestPlay {
-    output: MidiOutputConnection,
     uuid: String,
     app_state: Arc<AppState>,
 }
@@ -44,7 +43,6 @@ async fn audio_engine_main(
     interrupts: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
 ) -> Result<(), String> {
     let RequestPlay {
-        mut output,
         uuid,
         app_state,
     } = request_play;
@@ -55,6 +53,20 @@ async fn audio_engine_main(
             return Err(format!("{uuid} not found. Try reloading page"));
         };
         midi_source.clone()
+    };
+
+    let mut output = {
+        let out = MidiOutput::new("harmonia").map_err(|error| format!("failed to open midi output: {error}"))?;
+        let midi_port = &out.ports()[midi_source.associated_port];
+        info!(
+            "outputing to output port #{} named: {}",
+            midi_source.associated_port,
+            out.port_name(midi_port).unwrap(),
+            );
+
+        out
+            .connect(midi_port, /* TODO: Better name */ "harmonia-play")
+            .map_err(|err| format!("failed to connect to midi port: {err}"))?
     };
 
     let mut session_state = SessionState::new();
@@ -291,30 +303,6 @@ pub async fn interrupt(app_state: Arc<AppState>) -> Result<(), String> {
 }
 
 pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
-    let conn_out = {
-        let midi_sources = app_state.sources.read().unwrap();
-        let Some(midi_source) = midi_sources.get(uuid) else {
-            return Err(format!("{uuid} not found. Try reloading page"));
-        };
-
-        midi_source
-            .midi()
-            .map_err(|err| format!("failed to parse midi: {err}"))?;
-
-        let midi_out = MidiOutput::new("harmonia")
-            .map_err(|err| format!("failed to create midi output port: {err}"))?;
-
-        let midi_port = &midi_out.ports()[midi_source.associated_port];
-        info!(
-            "outputing to output port #{} named: {}",
-            midi_source.associated_port,
-            midi_out.port_name(midi_port).unwrap(),
-            );
-        midi_out
-            .connect(midi_port, /* TODO: Better name */ "play")
-            .map_err(|err| format!("failed to connect to midi port: {err}"))?
-    };
-
     // TODO: This is wrong approach, we should select what will be played, not what to play now.
     let work_in = app_state
         .audio_engine
@@ -324,7 +312,6 @@ pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
 
     work_in
         .send(Request::Play(RequestPlay {
-            output: conn_out,
             uuid: uuid.to_string(),
             app_state: app_state.clone(),
         }))
