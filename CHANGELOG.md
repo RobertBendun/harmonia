@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2024-04-15
+
+### Added
+
+- Automatic Github Workflow that _should_ automatically build releases for supported platforms
+
+### Fixed
+
+- Stopping and switching played sources
+
 ## [0.1.0] - 2024-04-12
 
 Initial version that was tested with Lambda Ensamble.
