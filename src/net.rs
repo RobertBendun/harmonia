@@ -23,7 +23,7 @@ impl Sockets {
                 }
             })
             .collect();
-        assert!(sockets.len() > 0);
+        assert!(!sockets.is_empty());
         Self { sockets }
     }
 

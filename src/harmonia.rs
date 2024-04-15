@@ -1,9 +1,8 @@
 use clap::Parser;
 use std::{
     collections::HashMap,
-    fs::File,
     io::BufReader,
-    net::{IpAddr, SocketAddr, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     process::ExitCode,
     sync::{Arc, RwLock},
@@ -178,14 +177,15 @@ fn setup_logging_system() -> tracing_appender::non_blocking::WorkerGuard {
 
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "harmonia=info,linky_groups=info,linky_groups::net=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "harmonia=info,linky_groups=info,linky_groups::net=info".into()
+            }),
         )
         .with(
             tracing_subscriber::fmt::layer().and_then(
                 tracing_subscriber::fmt::layer()
                     .with_ansi(false)
-                    .with_writer(log_file_appender)
+                    .with_writer(log_file_appender),
             ),
         )
         .init();
@@ -220,8 +220,12 @@ async fn main() -> ExitCode {
         }
     );
 
-    async fn htmx_js()  -> impl IntoResponse { public::File("htmx.min.js") }
-    async fn index_js() -> impl IntoResponse { public::File("index.js") }
+    async fn htmx_js() -> impl IntoResponse {
+        public::File("htmx.min.js")
+    }
+    async fn index_js() -> impl IntoResponse {
+        public::File("index.js")
+    }
 
     // Conventions:
     //   Paths begining with /api/ are meant for JavaScript
@@ -265,7 +269,7 @@ async fn main() -> ExitCode {
     let display_address = if addr.ip().is_unspecified() {
         SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), addr.port())
     } else {
-        addr.clone()
+        addr
     };
 
     info!("Listening on http://{display_address}");
@@ -458,7 +462,7 @@ async fn midi_set_group_for_source(
         };
 
         // TODO: Unnesesary string allocation
-        midi_source.group = if group.bytes().count() > linky_groups::MAX_GROUP_ID_LENGTH {
+        midi_source.group = if group.len() > linky_groups::MAX_GROUP_ID_LENGTH {
             let mut cut = linky_groups::MAX_GROUP_ID_LENGTH;
             while !group.is_char_boundary(cut) {
                 cut -= 1;
@@ -466,9 +470,13 @@ async fn midi_set_group_for_source(
             &group[..cut]
         } else {
             &group[..]
-        }.to_owned();
+        }
+        .to_owned();
 
-        tracing::info!("Switched midi source {uuid} to group {group:?}", group = midi_source.group);
+        tracing::info!(
+            "Switched midi source {uuid} to group {group:?}",
+            group = midi_source.group
+        );
         Ok(render_group_cell(&uuid, &midi_source.group))
     };
 
@@ -553,7 +561,9 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
     let midi_sources = app_state.sources.read().unwrap();
 
     let mut orderered_midi_sources: Vec<_> = midi_sources.iter().collect();
-    orderered_midi_sources.sort_by(|(_, lhs_source), (_, rhs_source)| lhs_source.file_name.cmp(&rhs_source.file_name));
+    orderered_midi_sources.sort_by(|(_, lhs_source), (_, rhs_source)| {
+        lhs_source.file_name.cmp(&rhs_source.file_name)
+    });
 
     html! {
         table {
@@ -788,7 +798,9 @@ async fn midi_play_source_handler(
 }
 
 async fn midi_interrupt(State(app_state): State<Arc<AppState>>) {
-    let _ = audio_engine::interrupt(app_state);
+    if let Err(error) = audio_engine::interrupt(app_state).await {
+        tracing::error!("failed to interrupt: {error}");
+    }
 }
 
 async fn midi_add_new_source_handler(

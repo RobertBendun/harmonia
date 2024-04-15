@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use midir::{MidiOutput, MidiOutputConnection};
+use midir::MidiOutput;
 use midly::live::LiveEvent;
 use rusty_link::SessionState;
 use tracing::{info, warn};
@@ -42,10 +42,7 @@ async fn audio_engine_main(
     request_play: RequestPlay,
     interrupts: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
 ) -> Result<(), String> {
-    let RequestPlay {
-        uuid,
-        app_state,
-    } = request_play;
+    let RequestPlay { uuid, app_state } = request_play;
 
     let midi_source = {
         let midi_sources = app_state.sources.read().unwrap();
@@ -56,16 +53,16 @@ async fn audio_engine_main(
     };
 
     let mut output = {
-        let out = MidiOutput::new("harmonia").map_err(|error| format!("failed to open midi output: {error}"))?;
+        let out = MidiOutput::new("harmonia")
+            .map_err(|error| format!("failed to open midi output: {error}"))?;
         let midi_port = &out.ports()[midi_source.associated_port];
         info!(
             "outputing to output port #{} named: {}",
             midi_source.associated_port,
             out.port_name(midi_port).unwrap(),
-            );
+        );
 
-        out
-            .connect(midi_port, /* TODO: Better name */ "harmonia-play")
+        out.connect(midi_port, /* TODO: Better name */ "harmonia-play")
             .map_err(|err| format!("failed to connect to midi port: {err}"))?
     };
 
@@ -79,7 +76,13 @@ async fn audio_engine_main(
         app_state.link.commit_app_session_state(&session_state);
     } else {
         tracing::info!("Starting with group: {group:?}", group = midi_source.group);
-        app_state.groups.as_ref().unwrap().start(&midi_source.group).await.unwrap();
+        app_state
+            .groups
+            .as_ref()
+            .unwrap()
+            .start(&midi_source.group)
+            .await
+            .unwrap();
     }
 
     tokio::task::spawn_blocking(move || {
@@ -100,7 +103,6 @@ async fn audio_engine_main(
         *app_state.current_playing_progress.write().unwrap() =
             (0_usize, midi.tracks.last().unwrap().len());
         info!("commiting start state");
-
 
         let mut time_passed = 0.0;
         let mut track = midi.tracks.last().unwrap().iter().enumerate();
@@ -127,7 +129,8 @@ async fn audio_engine_main(
             // TODO: Rust makes a note that condvar shouldn't be use in time critical applications?
             loop {
                 app_state.link.capture_app_session_state(&mut session_state);
-                let current_time = session_state.beat_at_time(app_state.link.clock_micros(), quantum);
+                let current_time =
+                    session_state.beat_at_time(app_state.link.clock_micros(), quantum);
 
                 info!("[passed={time_passed}, current={current_time}] {event:?}");
                 if current_time >= time_passed {
@@ -173,13 +176,13 @@ async fn audio_engine_main(
                     // TODO: Remember currenlty played notes so we can unwind this musical stack when
                     // we turn it off.
                     midly::MidiMessage::NoteOn { key, vel } => {
-                        notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] =
-                            vel != 0;
+                        notes_played_per_channel[channel.as_int() as usize]
+                            [key.as_int() as usize] = vel != 0;
                         output.send(bytes).unwrap();
                     }
                     midly::MidiMessage::NoteOff { key, .. } => {
-                        notes_played_per_channel[channel.as_int() as usize][key.as_int() as usize] =
-                            false;
+                        notes_played_per_channel[channel.as_int() as usize]
+                            [key.as_int() as usize] = false;
                         output.send(bytes).unwrap();
                     }
                     msg => {
@@ -199,11 +202,10 @@ async fn audio_engine_main(
 
         let task = {
             let app_state = app_state.clone();
-            tokio::spawn(async move {
-                app_state.groups.as_ref().unwrap().stop().await
-            })
+            tokio::spawn(async move { app_state.groups.as_ref().unwrap().stop().await })
         };
 
+        let mut buf = Vec::new();
         for (channel, notes) in notes_played_per_channel.iter().enumerate() {
             for (key, played) in notes.iter().enumerate() {
                 if *played {
@@ -215,9 +217,13 @@ async fn audio_engine_main(
                         },
                     };
 
-                    let mut buf = [0_u8; 4];
-                    event.write_std(&mut buf[..]).unwrap();
-                    output.send(&buf).unwrap();
+                    event.write(&mut buf).expect(
+                        "this notes were produced from valid MIDI messages so they must serialize",
+                    );
+                    if let Err(error) = output.send(&buf) {
+                        tracing::error!("failed to send cleanup note off message: {error}");
+                    }
+                    buf.clear();
                 }
             }
         }
@@ -225,7 +231,11 @@ async fn audio_engine_main(
         output.close();
         *app_state.currently_playing_uuid.write().unwrap() = None;
         task
-    }).await.unwrap().await.unwrap();
+    })
+    .await
+    .unwrap()
+    .await
+    .unwrap();
     Ok(())
 }
 
@@ -255,7 +265,10 @@ impl Default for AudioEngine {
                     Request::Quit => break,
                 };
 
-                interrupt = Some(Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())));
+                interrupt = Some(Arc::new((
+                    std::sync::Mutex::new(false),
+                    std::sync::Condvar::new(),
+                )));
                 let worker_interrupt = interrupt.clone().unwrap();
                 let worker = tokio::spawn(async move {
                     if let Err(err) = audio_engine_main(request, worker_interrupt).await {
@@ -275,28 +288,29 @@ impl Default for AudioEngine {
 }
 
 pub async fn quit(app_state: Arc<AppState>) {
-    let Ok(_) = app_state
-        .audio_engine
-        .write()
-        .unwrap()
-        .work_in
-        .send(Request::Quit)
-        .await
-    else {
-        return;
+    let work_in = {
+        let audio_engine = app_state.audio_engine.write().unwrap();
+        audio_engine.work_in.clone()
     };
 
-    if let Some(worker) = app_state.audio_engine.write().unwrap().worker.take() {
+    if work_in.send(Request::Quit).await.is_err() {
+        return;
+    }
+
+    let worker = app_state.audio_engine.write().unwrap().worker.take();
+    if let Some(worker) = worker {
         let _ = worker.await;
     }
 }
 
+// TODO: Since axum is using tokio under the hood this should be compatible with http handlers
 pub async fn interrupt(app_state: Arc<AppState>) -> Result<(), String> {
-    app_state
-        .audio_engine
-        .write()
-        .unwrap()
-        .work_in
+    let work_in = {
+        let audio_engine = app_state.audio_engine.write().unwrap();
+        audio_engine.work_in.clone()
+    };
+
+    work_in
         .send(Request::Interrupt)
         .await
         .map_err(|err| format!("failed to send job: {err}"))
@@ -304,11 +318,7 @@ pub async fn interrupt(app_state: Arc<AppState>) -> Result<(), String> {
 
 pub async fn play(app_state: Arc<AppState>, uuid: &str) -> Result<(), String> {
     // TODO: This is wrong approach, we should select what will be played, not what to play now.
-    let work_in = app_state
-        .audio_engine
-        .write()
-        .unwrap()
-        .work_in.clone();
+    let work_in = app_state.audio_engine.write().unwrap().work_in.clone();
 
     work_in
         .send(Request::Play(RequestPlay {
