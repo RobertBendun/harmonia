@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2024-04-26
+
+### Added
+
+- Home path abbreviation for config path (somewhat privacy oriented change)
+- Show number of peers in current state
+
+### Fixed
+
+- Refresh MIDI only refreshed the list - all the port associations stayed the same
+
 ## [0.1.1] - 2024-04-15
 
 ### Added
