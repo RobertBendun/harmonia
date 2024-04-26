@@ -381,9 +381,12 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
 
     let current_playing_progress = *app_state.current_playing_progress.read().unwrap();
 
+    let peers = app_state.link.num_peers();
+
     html! {
         div {
             "Active: "; (active);
+            ", Peers: "; (peers);
             ", BPM: ";    (session_state.tempo());
             ", beat: "; (beat);
             ", playing: "; (app_state.groups.as_ref().unwrap().is_playing());
@@ -707,8 +710,18 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     br;
                     (version_handler().await);
                     br;
-                    "State cache: ";
-                    (cache_path().join(STATE_PATH).to_str().unwrap());
+                    "Logs and state: ";
+                    ({
+                        let cache = cache_path();
+                        let c: &std::path::Path = &cache;
+                        dirs::home_dir()
+                            .and_then(|home| c.strip_prefix(home).ok())
+                            .map(|p| PathBuf::from("~").join(p))
+                            .unwrap_or(cache)
+                            .to_str()
+                            .unwrap()
+                            .to_owned()
+                    });
                     br;
                     button onclick="toggle_color_scheme()" {
                         "Toggle color scheme"
@@ -728,8 +741,8 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     h2 { "System information" }
                     (system_information(app_state.clone()).await);
                     h3 { "MIDI ports" }
-                    button hx-get="/midi/ports" hx-target="#midi-ports" hx-swap="innerHTML" {
-                        "Refresh"
+                    p {
+                        "Refresh page (F5 or CTRL-R) to refresh list of available MIDI ports";
                     }
                     div id="midi-ports" {
                         (midi_list_ports_handler(app_state.clone()).await);
