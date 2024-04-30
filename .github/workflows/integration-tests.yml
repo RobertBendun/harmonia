@@ -1,0 +1,22 @@
+name: Integration testing
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    strategy:
+      matrix:
+        include:
+          - os: macos-12
+          - os: windows-2022
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        run: "pip install requests==2.31.0"
+
+      - name: Build target binary
+        run: "cargo build --bin harmonia"
+
+      - name: Run integration tests
+        run: python tests/integration.py
