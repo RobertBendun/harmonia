@@ -1,16 +1,24 @@
 #include <assert.h>
 #include <lauxlib.h>
 #include <lua.h>
+#include <math.h>
+#include <stdlib.h>
+#include <pthread.h>
 #include <rtmidi/rtmidi_c.h>
+#include <stdbool.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-#include <math.h>
-#include <stdbool.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 typedef struct
 {
-	float prev, now, note_remaining_time[128], sleep;
+	double prev, now, note_remaining_time[128], sleep;
+	double *external_now;
 } state;
 
 static void init(state *s);
@@ -19,17 +27,17 @@ static bool execute(state *s, RtMidiOutPtr rtmidi, bool coroutine_ended);
 
 static void note_on(RtMidiOutPtr device, unsigned note);
 static void note_off(RtMidiOutPtr device, unsigned note);
-static float current_time();
-static void sleep_for(float f);
+static void sleep_for(double f);
 
 static int l_bind_block(lua_State *L)
 {
 	char const *path, *action;
 	lua_State *co;
 	int note, nres;
-	float duration;
+	double duration;
 	RtMidiOutPtr rtmidi;
 	state s = {};
+	int fd;
 
 	/* Ensure that user provided correct arguments */
 	path = luaL_checkstring(L, 1);
@@ -43,6 +51,11 @@ static int l_bind_block(lua_State *L)
 	/* Create MIDI context */
 	rtmidi = rtmidi_out_create_default();
 	rtmidi_open_port(rtmidi, 0, "Harmonia test");
+
+	/* Start receiving time */
+	fd = shm_open(path, O_RDONLY, 0644);
+	assert(fd >= 0);
+	s.external_now = mmap(NULL, sizeof(double), PROT_READ, MAP_SHARED, fd, 0);
 
 	init(&s);
 	for (;;) {
@@ -66,6 +79,7 @@ static int l_bind_block(lua_State *L)
 					} else if (strcmp(action, "sleep") == 0) {
 						s.sleep = luaL_checknumber(co, 2);
 					} else {
+						close(fd);
 						rtmidi_close_port(rtmidi);
 						lua_pushliteral(co, "failed to recognize action");
 						lua_error(co);
@@ -80,6 +94,7 @@ static int l_bind_block(lua_State *L)
 			break;
 	}
 
+	close(fd);
 	rtmidi_close_port(rtmidi);
 
 	return 1;
@@ -112,35 +127,28 @@ static void note_off(RtMidiOutPtr device, unsigned note)
 	rtmidi_out_send_message(device, message, sizeof(message));
 }
 
-static float current_time()
-{
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (float)ts.tv_sec + ts.tv_nsec/1000000000.0;
-}
-
-static void sleep_for(float f)
+static void sleep_for(double f)
 {
 	if (f < 0)
 		return;
 
 	fprintf(stderr, "executor: sleep for: %f\n", f);
 	nanosleep(&(struct timespec) {
-			.tv_sec = floorf(f),
-			.tv_nsec = (f - floorf(f)) * 1000000000,
+			.tv_sec = floor(f),
+			.tv_nsec = (f - floor(f)) * 1000000000,
 	}, NULL);
 }
 
 static void init(state *s)
 {
-	s->now = current_time();
+	s->now = *s->external_now;
 }
 
 static void forward(state *s, RtMidiOutPtr rtmidi)
 {
 	size_t i;
 	s->prev = s->now;
-	s->now = current_time();
+	s->now = *s->external_now;
 
 	/* Update remaining note times based on how much time has passed */
 	for (i = 0; i < sizeof(s->note_remaining_time) / sizeof(*s->note_remaining_time); ++i) {
@@ -160,7 +168,7 @@ static void forward(state *s, RtMidiOutPtr rtmidi)
 
 static bool execute(state *s, RtMidiOutPtr rtmidi, bool coroutine_ended)
 {
-	float min_wait_time;
+	double min_wait_time;
 	size_t i;
 
 	forward(s, rtmidi);
