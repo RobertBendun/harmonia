@@ -8,7 +8,7 @@ use midly::live::LiveEvent;
 use rusty_link::SessionState;
 use tracing::{info, warn};
 
-use crate::AppState;
+use crate::{block, AppState};
 
 pub struct AudioEngine {
     pub state: Weak<AppState>,
@@ -44,14 +44,112 @@ async fn audio_engine_main(
 ) -> Result<(), String> {
     let RequestPlay { uuid, app_state } = request_play;
 
-    let midi_source = {
-        let midi_sources = app_state.sources.read().unwrap();
-        let Some(midi_source) = midi_sources.get(&uuid) else {
-            return Err(format!("{uuid} not found. Try reloading page"));
+    let block = {
+        let blocks = app_state.blocks.read().unwrap();
+        let Some(block) = blocks.get(&uuid) else {
+            return Err(format!("block#{uuid} not found. Try reloading page"));
         };
-        midi_source.clone()
+        block.clone()
     };
 
+    match block.content {
+        block::Content::Midi(midi) => {
+            audio_engine_main_midi(uuid, block.group, app_state, midi, interrupts).await
+        }
+
+        block::Content::SharedMemory { path } => {
+            audio_engine_shered_memory_main(uuid, path, block.group, app_state, interrupts).await
+        }
+    }
+}
+
+async fn audio_engine_shered_memory_main(
+    uuid: String,
+    path: String,
+    group: String,
+    app_state: Arc<AppState>,
+    interrupts: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+) -> Result<(), String> {
+    let mut session_state = SessionState::new();
+    let quantum = 1.0;
+
+    if group.is_empty() {
+        tracing::info!("Empty group, starting using request_beat_at_time");
+        app_state.link.capture_app_session_state(&mut session_state);
+        session_state.request_beat_at_time(0.0, app_state.link.clock_micros(), quantum);
+        app_state.link.commit_app_session_state(&session_state);
+    } else {
+        tracing::info!("Starting with group: {group:?}");
+        app_state
+            .groups
+            .as_ref()
+            .unwrap()
+            .start(&group)
+            .await
+            .unwrap();
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let shm = match shared_memory::ShmemConf::new()
+            .size(std::mem::size_of::<f64>())
+            .os_id(&path)
+            .create()
+        {
+            Ok(shm) => shm,
+            Err(error) => return Err(error.to_string()),
+        };
+        let p = shm.as_ptr() as *mut f64;
+        tracing::info!("creating shared_memory instance {path}");
+
+        *app_state.currently_playing_uuid.write().unwrap() = Some(uuid.clone());
+        *app_state.current_playing_progress.write().unwrap() = (0_usize, 0_usize);
+        info!("commiting start state");
+
+        loop {
+            let (interrupt, interruptable_sleep) = &*interrupts;
+            let interrupted = interrupt.try_lock().map(|x| *x).unwrap_or(false);
+            if interrupted {
+                break;
+            }
+
+            app_state.link.capture_app_session_state(&mut session_state);
+
+            let time = session_state.beat_at_time(app_state.link.clock_micros(), quantum);
+            unsafe { *p = time };
+
+            let guard = interrupt.lock().unwrap();
+            let (interrupted, _) = interruptable_sleep
+                .wait_timeout(guard, Duration::from_secs_f64(0.0001))
+                .unwrap();
+
+            if *interrupted {
+                break;
+            }
+        }
+
+        let task = {
+            let app_state = app_state.clone();
+            tokio::spawn(async move { app_state.groups.as_ref().unwrap().stop().await })
+        };
+
+        *app_state.currently_playing_uuid.write().unwrap() = None;
+        Ok(task)
+    })
+    .await
+    .unwrap()?
+    .await
+    .unwrap();
+
+    Ok(())
+}
+
+async fn audio_engine_main_midi(
+    uuid: String,
+    group: String,
+    app_state: Arc<AppState>,
+    midi_source: block::MidiSource,
+    interrupts: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+) -> Result<(), String> {
     let mut output = {
         let out = MidiOutput::new("harmonia")
             .map_err(|error| format!("failed to open midi output: {error}"))?;
@@ -69,18 +167,18 @@ async fn audio_engine_main(
     let mut session_state = SessionState::new();
     let quantum = 1.0;
 
-    if midi_source.group.is_empty() {
+    if group.is_empty() {
         tracing::info!("Empty group, starting using request_beat_at_time");
         app_state.link.capture_app_session_state(&mut session_state);
         session_state.request_beat_at_time(0.0, app_state.link.clock_micros(), quantum);
         app_state.link.commit_app_session_state(&session_state);
     } else {
-        tracing::info!("Starting with group: {group:?}", group = midi_source.group);
+        tracing::info!("Starting with group: {group:?}");
         app_state
             .groups
             .as_ref()
             .unwrap()
-            .start(&midi_source.group)
+            .start(&group)
             .await
             .unwrap();
     }
@@ -99,7 +197,7 @@ async fn audio_engine_main(
                 panic!("Timecode timing format is not supported");
             }
         };
-        *app_state.currently_playing_uuid.write().unwrap() = Some(uuid.to_string());
+        *app_state.currently_playing_uuid.write().unwrap() = Some(uuid.clone());
         *app_state.current_playing_progress.write().unwrap() =
             (0_usize, midi.tracks.last().unwrap().len());
         info!("commiting start state");

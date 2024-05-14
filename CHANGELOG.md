@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New shared memory API
+- Example of shared memory API usage in Lua using C library
+
+### Changed
+
+- Renamed "MIDI Sources" to "Blocks" to account for new forms of musical actions
+
 ## [0.1.2] - 2024-04-26
 
 ### Added

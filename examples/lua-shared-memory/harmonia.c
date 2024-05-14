@@ -14,6 +14,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
 
 typedef struct
 {
@@ -28,6 +29,7 @@ static bool execute(state *s, RtMidiOutPtr rtmidi, bool coroutine_ended);
 static void note_on(RtMidiOutPtr device, unsigned note);
 static void note_off(RtMidiOutPtr device, unsigned note);
 static void sleep_for(double f);
+static void wait_for_file(char const* path);
 
 static int l_bind_block(lua_State *L)
 {
@@ -53,6 +55,7 @@ static int l_bind_block(lua_State *L)
 	rtmidi_open_port(rtmidi, 0, "Harmonia test");
 
 	/* Start receiving time */
+	wait_for_file(path);
 	fd = shm_open(path, O_RDONLY, 0644);
 	assert(fd >= 0);
 	s.external_now = mmap(NULL, sizeof(double), PROT_READ, MAP_SHARED, fd, 0);
@@ -196,4 +199,20 @@ sleep_again:
 	}
 
 	return true;
+}
+
+static void wait_for_file(char const* path)
+{
+	struct stat s;
+	// TODO: https://insanecoding.blogspot.com/2007/11/pathmax-simply-isnt.html
+	char full_path[PATH_MAX] = "/dev/shm";
+	strcat(full_path, path);
+
+	while (stat(full_path, &s) < 0 && errno == ENOENT) {
+		float const f = 0.001;
+		nanosleep(&(struct timespec) {
+				.tv_sec = floor(f),
+				.tv_nsec = (f - floor(f)) * 1000000000,
+		}, NULL);
+	}
 }

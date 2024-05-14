@@ -16,7 +16,7 @@ function sleep(duration)
 	coroutine.yield("sleep", duration)
 end
 
-harmonia.bind_block("/harmonia-block", function ()
+harmonia.bind_block("/harmonia-test", function ()
 	local prog = {c4, e4, g4}
 
 	for i = 1,8 do
