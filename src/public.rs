@@ -19,3 +19,14 @@ impl axum::response::IntoResponse for File {
         }
     }
 }
+
+macro_rules! static_response {
+    ($method: ident, $filename: literal) => {{
+        async fn static_response() -> impl axum::response::IntoResponse {
+            public::File($filename)
+        }
+        $method(static_response)
+    }};
+}
+
+pub(crate) use static_response;

@@ -5,8 +5,6 @@ let midi_sources_div = null;
 document.addEventListener('DOMContentLoaded', async () => {
 	document.addEventListener('keyup', keyup);
 
-	set_color_scheme(get_color_scheme());
-
 	// Sometimes when we update the page, browser preserve the state of inputs
 	// which allows us to keep keybindings from previous state of page
 	for (const input of document.querySelectorAll('input[name=keybind]')) {
@@ -29,8 +27,7 @@ function socket_event(type, socket) {
 }
 
 async function init_websocket() {
-	const link_status_div = document.getElementById("link-status");
-	const app_health_span = document.getElementById('app-health');
+	const link_status_div = document.getElementById("status");
 
 	for (;;) {
 		let socket = null;
@@ -39,7 +36,8 @@ async function init_websocket() {
 
 			socket.addEventListener("open", () => {
 				console.log("successfully initialized connection with link status websocket");
-				app_health_span.innerText = "connected";
+				const app_health_span = document.getElementById('app-health');
+				app_health_span.innerText = "Synchronized";
 				app_health_span.style.color = "inherit";
 			});
 
@@ -53,7 +51,8 @@ async function init_websocket() {
 				await socket_event("close", socket);
 			}
 			console.error("Connection was closed, trying to reconnect after 300ms");
-			app_health_span.innerText = "disconnected";
+			const app_health_span = document.getElementById('app-health');
+			app_health_span.innerText = "ERROR";
 			app_health_span.style.color = "red";
 
 			await delay(300);
@@ -74,9 +73,9 @@ async function keyup(ev) {
 		return;
 	}
 
-	const input_element = registered_key_bindings[ev.key];
-	if (input_element) {
-		await fetch(`/midi/play/${input_element.dataset.uuid}`, { method: 'POST' });
+	const uuid = registered_key_bindings[ev.key];
+	if (uuid) {
+		await fetch(`/blocks/play/${uuid}`, { method: 'POST' });
 	}
 }
 
@@ -84,39 +83,19 @@ async function keyup(ev) {
 	* @param {HTMLInputElement} input_element
 	*/
 function update_key_binding(input_element) {
-	if (input_element.value.length > 0) {
+	if (input_element.value.length > 0 && input_element.dataset) {
 		console.log('Registering keybinding', input_element.value);
-		registered_key_bindings[input_element.value.trim()] = input_element;
+		const binding = input_element.value.trim();
+		registered_key_bindings[input_element.value.trim()] = input_element.dataset.uuid;
+		for (const other of document.querySelectorAll('input[name="keybind"]')) {
+			if (other.value.trim() === binding && other.dataset.uuid !== input_element.dataset.uuid) {
+				other.value = "";
+			}
+		}
 	}
 }
 
-async function change_link_status() {
-	await fetch('/api/link-switch-enabled', { method: 'POST' });
-}
 
-function get_color_scheme() {
-	let scheme = window.localStorage.getItem('preffered-color-scheme');
-	if (scheme) {
-		return scheme;
-	}
-	if (window.matchMedia) {
-		scheme = window.matchMedia('(prefers-color-scheme: light)').matches ? "light" : "dark";
-	} else {
-		scheme = "dark";
-	}
-	window.localStorage.setItem('preffered-color-scheme', scheme);
-	return scheme;
-}
-
-function set_color_scheme(scheme) {
-	document.documentElement.style.colorScheme = scheme;
-	window.localStorage.setItem('preffered-color-scheme', scheme);
-	// const color_switch = document.getElementById('color-switch');
-	// if (color_switch) {
-	// 	color_switch.innerText = icon[scheme];
-	// }
-}
-
-function toggle_color_scheme() {
-	set_color_scheme({ "light": "dark", "dark": "light" }[get_color_scheme()])
+function toggle_delete(self) {
+	document.body.classList.toggle('delete-mode-active');
 }
