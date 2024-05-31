@@ -26,9 +26,8 @@ use axum::{
 };
 
 use midir::{MidiOutput, MidiOutputPort};
-use midly::SmfBytemap;
 use rusty_link::{AblLink, SessionState};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
@@ -41,31 +40,10 @@ mod audio_engine;
 use audio_engine::AudioEngine;
 mod version;
 use version::Version;
-
+mod block;
 mod public;
 
 const STATE_PATH: &str = "harmonia_state.bson";
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct MidiSource {
-    pub bytes: Vec<u8>,
-    pub file_name: String,
-    pub associated_port: usize,
-    pub keybind: String,
-
-    /// Group in which MIDI Source should be played
-    ///
-    /// Empty means any group, max 15 chars.
-    pub group: String,
-}
-
-impl MidiSource {
-    pub fn midi(&self) -> Result<SmfBytemap<'_>, midly::Error> {
-        SmfBytemap::parse(&self.bytes)
-    }
-}
-
-type MidiSources = HashMap<String, MidiSource>;
 
 pub struct MidiConnection {
     pub ports: Vec<MidiOutputPort>,
@@ -91,7 +69,7 @@ impl MidiConnection {
 }
 
 pub struct AppState {
-    pub sources: RwLock<MidiSources>,
+    pub blocks: RwLock<HashMap<String, block::Block>>,
     pub connection: RwLock<MidiConnection>,
     pub link: Arc<AblLink>,
     pub audio_engine: RwLock<AudioEngine>,
@@ -118,7 +96,7 @@ impl AppState {
     fn new(port: u16) -> Self {
         let link = Arc::new(AblLink::new(120.));
         Self {
-            sources: Default::default(),
+            blocks: Default::default(),
             connection: Default::default(),
             link: link.clone(),
             audio_engine: Default::default(),
@@ -129,20 +107,20 @@ impl AppState {
         }
     }
 
-    fn recollect_previous_sources(&self) -> Result<(), anyhow::Error> {
+    fn recollect_previous_blocks(&self) -> Result<(), anyhow::Error> {
         let path = cache_path().join(STATE_PATH);
         let file = std::fs::File::open(path).context("opening state file")?;
 
-        let new_sources: MidiSources =
+        let new_sources: HashMap<String, block::Block> =
             bson::from_reader(BufReader::new(file)).context("reading bson file")?;
-        let mut sources = self.sources.write().unwrap();
+        let mut sources = self.blocks.write().unwrap();
         sources.extend(new_sources);
 
         Ok(())
     }
 
-    fn remember_current_sources(&self) -> Result<(), anyhow::Error> {
-        let sources = self.sources.read().unwrap();
+    fn remember_current_blocks(&self) -> Result<(), anyhow::Error> {
+        let sources = self.blocks.read().unwrap();
         let path = cache_path().join(STATE_PATH);
         std::fs::write(path, bson::to_vec(&*sources).context("sources to vec")?)
             .context("saving sources to file")?;
@@ -200,12 +178,12 @@ async fn main() -> ExitCode {
     info!("starting up version {}", Version::default());
 
     let app_state = Arc::new(AppState::new(args.port));
-    if let Err(err) = app_state.recollect_previous_sources() {
+    if let Err(err) = app_state.recollect_previous_blocks() {
         warn!("trying to recollect previous sources: {err:#}")
     } else {
         info!(
-            "recollected {count} sources",
-            count = app_state.sources.read().unwrap().len()
+            "recollected {count} blocks",
+            count = app_state.blocks.read().unwrap().len()
         )
     }
 
@@ -237,17 +215,17 @@ async fn main() -> ExitCode {
         )
         .route("/api/link-switch-enabled", post(link_switch_enabled))
         .route("/link/status", get(link_status_handler))
-        .route("/midi", put(midi_add_new_source_handler))
-        .route("/midi/", put(midi_add_new_source_handler))
-        .route("/midi/:uuid", delete(remove_midi_source_handler))
-        .route("/midi/:uuid", get(midi_download_source_handler))
-        .route("/midi/play/:uuid", post(midi_play_source_handler))
+        .route("/blocks/midi", put(add_new_midi_source_block))
+        .route("/blocks/shared_memory", put(add_new_shered_memory_block))
+        .route("/blocks/:uuid", delete(remove_block))
+        .route("/blocks/:uuid", get(block_download_content))
+        .route("/blocks/play/:uuid", post(play_block))
         .route("/midi/ports", get(midi_list_ports_handler))
-        .route("/midi/set-port/:uuid", post(midi_set_port_for_source))
-        .route("/midi/set-group/:uuid", post(midi_set_group_for_source))
-        .route("/midi/set-keybind/:uuid", post(midi_set_keybind_for_source))
+        .route("/blocks/midi/set-port/:uuid", post(block_set_port_for_midi))
+        .route("/blocks/set-group/:uuid", post(block_set_group))
+        .route("/blocks/set-keybind/:uuid", post(block_set_keybind))
         .route("/version", get(version_handler))
-        .route("/midi/interrupt", post(midi_interrupt))
+        .route("/interrupt", post(interrupt))
         .route("/", get(index_handler))
         .route("/htmx.min.js", get(htmx_js))
         .route("/index.js", get(index_js))
@@ -395,10 +373,7 @@ async fn link_status_handler(State(app_state): State<Arc<AppState>>) -> Markup {
             div {
                 "Currently playing: ";
                 ({
-                    let sources = app_state.sources.read().unwrap();
-                    let currently_playing = sources.get(currently_playing).unwrap();
-                    // TODO: Avoidable clone?
-                    currently_playing.file_name.clone()
+                    app_state.blocks.read().unwrap().get(currently_playing).unwrap().content.name()
                 });
                 " ";
                 progress max=(current_playing_progress.1) min="0" value=(current_playing_progress.0) {}
@@ -415,24 +390,30 @@ struct SetPort {
     pub port: usize,
 }
 
-async fn midi_set_port_for_source(
+async fn block_set_port_for_midi(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
     Form(SetPort { port }): Form<SetPort>,
 ) -> Result<Markup, StatusCode> {
-    let mut midi_sources = app_state.sources.write().unwrap();
+    let mut blocks = app_state.blocks.write().unwrap();
 
-    let Some(midi_source) = midi_sources.get_mut(&uuid) else {
-        error!("{uuid} not found");
+    let Some(block) = blocks.get_mut(&uuid) else {
+        error!("block#{uuid} was not found");
         return Err(StatusCode::NOT_FOUND);
     };
+
+    let block::Content::Midi(ref mut midi) = block.content else {
+        error!("block#{uuid} is not a MIDI source");
+        return Err(StatusCode::BAD_REQUEST);
+    };
+
     let min = 1_usize;
     let max = app_state.connection.read().unwrap().ports.len();
     if port < min || port > max {
         error!("port number should be between {min} and {max}");
         return Ok(render_port_cell(
             &uuid,
-            midi_source.associated_port,
+            midi.associated_port,
             Some(if port > max {
                 "port number too high".to_string()
             } else {
@@ -442,8 +423,8 @@ async fn midi_set_port_for_source(
     }
 
     info!("setting port {port} for {uuid}");
-    midi_source.associated_port = port - 1;
-    Ok(render_port_cell(&uuid, midi_source.associated_port, None))
+    midi.associated_port = port - 1;
+    Ok(render_port_cell(&uuid, midi.associated_port, None))
 }
 
 #[derive(Deserialize)]
@@ -451,16 +432,16 @@ struct SetGroup {
     pub group: String,
 }
 
-async fn midi_set_group_for_source(
+async fn block_set_group(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
     Form(SetGroup { group }): Form<SetGroup>,
 ) -> Result<Markup, StatusCode> {
     let response = {
-        let mut midi_sources = app_state.sources.write().unwrap();
+        let mut blocks = app_state.blocks.write().unwrap();
 
-        let Some(midi_source) = midi_sources.get_mut(&uuid) else {
-            error!("{uuid} not found");
+        let Some(midi_source) = blocks.get_mut(&uuid) else {
+            error!("block#{uuid} not found");
             return Err(StatusCode::NOT_FOUND);
         };
 
@@ -477,14 +458,14 @@ async fn midi_set_group_for_source(
         .to_owned();
 
         tracing::info!(
-            "Switched midi source {uuid} to group {group:?}",
+            "Switched block#{uuid} to group {group:?}",
             group = midi_source.group
         );
         Ok(render_group_cell(&uuid, &midi_source.group))
     };
 
-    if let Err(err) = app_state.remember_current_sources() {
-        error!("midi_add_handler failed to remember current sources: {err:#}")
+    if let Err(err) = app_state.remember_current_blocks() {
+        error!("block_set_group failed to remember current sources: {err:#}")
     }
     response
 }
@@ -494,136 +475,129 @@ struct SetKeybind {
     pub keybind: String,
 }
 
-async fn midi_set_keybind_for_source(
+async fn block_set_keybind(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
     Form(SetKeybind { keybind }): Form<SetKeybind>,
 ) -> StatusCode {
     {
-        let mut midi_sources = app_state.sources.write().unwrap();
+        let mut midi_sources = app_state.blocks.write().unwrap();
 
-        let Some(midi_source) = midi_sources.get_mut(&uuid) else {
-            error!("{uuid} not found");
+        let Some(block) = midi_sources.get_mut(&uuid) else {
+            error!("block#{uuid} not found");
             return StatusCode::NOT_FOUND;
         };
 
-        info!("Changing keybind for {uuid} to {keybind}");
-        midi_source.keybind = keybind;
+        info!("Changing keybind for block#{uuid} to {keybind}");
+        block.keybind = keybind;
     }
 
-    if let Err(err) = app_state.remember_current_sources() {
-        error!("midi_add_handler failed to remember current sources: {err:#}")
+    if let Err(err) = app_state.remember_current_blocks() {
+        error!("set_keybind failed to remember current sources: {err:#}")
     }
 
     StatusCode::OK
 }
 
-async fn midi_download_source_handler(
+async fn block_download_content(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
 ) -> Response<Full<Bytes>> {
-    let midi_sources = app_state.sources.read().unwrap();
-    let Some(midi_source) = midi_sources.get(&uuid) else {
-        error!("{uuid} not found");
+    let not_found = || {
         let mut response = Response::new(Full::from("not found"));
         *response.status_mut() = StatusCode::NOT_FOUND;
         response
             .headers_mut()
             .insert(CONTENT_TYPE, "text/html".parse().unwrap());
-        return response;
+        response
     };
 
-    let mut response = Response::new(Full::from(midi_source.bytes.clone()));
-    let headers = &mut response.headers_mut();
-    headers.insert(
-        CONTENT_DISPOSITION,
-        format!("attachement; filename=\"{}\"", midi_source.file_name)
-            .parse()
-            .unwrap(),
-    );
-    headers.insert(CONTENT_TYPE, "audio/midi".parse().unwrap());
-    response
+    let blocks = app_state.blocks.read().unwrap();
+    let Some(block) = blocks.get(&uuid) else {
+        error!("block#{uuid} not found");
+        return not_found();
+    };
+
+    match &block.content {
+        block::Content::SharedMemory { .. } => not_found(),
+        block::Content::Midi(midi_source) => {
+            // TODO: Unnesesary clone?
+            let mut response = Response::new(Full::from(midi_source.bytes.clone()));
+            let headers = &mut response.headers_mut();
+            headers.insert(
+                CONTENT_DISPOSITION,
+                format!("attachement; filename=\"{}\"", midi_source.file_name)
+                    .parse()
+                    .unwrap(),
+            );
+            headers.insert(CONTENT_TYPE, "audio/midi".parse().unwrap());
+            response
+        }
+    }
 }
 
-async fn remove_midi_source_handler(
-    app_state: State<Arc<AppState>>,
-    Path(uuid): Path<String>,
-) -> Markup {
+async fn remove_block(app_state: State<Arc<AppState>>, Path(uuid): Path<String>) -> Markup {
     {
-        let mut sources = app_state.sources.write().unwrap();
+        let mut sources = app_state.blocks.write().unwrap();
         sources.remove(&uuid);
     }
-    if let Err(err) = app_state.remember_current_sources() {
+    if let Err(err) = app_state.remember_current_blocks() {
         error!("remove_midi_source_handler failed to remember current sources: {err:#}")
     }
 
-    midi_sources_render(app_state).await
+    render_blocks(app_state).await
 }
 
-async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
-    let midi_sources = app_state.sources.read().unwrap();
+async fn render_blocks(app_state: State<Arc<AppState>>) -> Markup {
+    use block::Content;
 
-    let mut orderered_midi_sources: Vec<_> = midi_sources.iter().collect();
-    orderered_midi_sources.sort_by(|(_, lhs_source), (_, rhs_source)| {
-        lhs_source.file_name.cmp(&rhs_source.file_name)
+    let blocks = app_state.blocks.read().unwrap();
+    let mut orderered_blocks: Vec<_> = blocks.iter().collect();
+    orderered_blocks.sort_by(|(_, lhs), (_, rhs)| match (lhs.order, rhs.order) {
+        (Some(lhs), Some(rhs)) => lhs.cmp(&rhs),
+        (Some(_), _) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => match (&lhs.content, &rhs.content) {
+            (Content::Midi(lhs), Content::Midi(rhs)) => lhs.file_name.cmp(&rhs.file_name),
+            (Content::SharedMemory { path: lhs }, Content::SharedMemory { path: rhs }) => {
+                lhs.cmp(rhs)
+            }
+            (Content::SharedMemory { .. }, Content::Midi(_)) => std::cmp::Ordering::Less,
+            (Content::Midi(_), Content::SharedMemory { .. }) => std::cmp::Ordering::Greater,
+        },
     });
 
     html! {
-        table {
-            thead {
-                th { "Filename" }
-                th { "Info" }
-                th { "Associated port" }
-                th { "Group" }
-                th { "Keybind" }
-                th { "Controls" }
-            }
-            tbody {
-                @for (uuid, source) in orderered_midi_sources.iter() {
-                    tr data-uuid=(uuid) {
-                        td {
-                            a href=(format!("/midi/{uuid}")) {
-                                (source.file_name)
-                            }
-                        }
-                        @match source.midi() {
-                            Ok(midi) => td {
-                                "Format: ";
-                                ({
-                                    match midi.header.format {
-                                        midly::Format::Sequential | midly::Format::SingleTrack => "sequential",
-                                        midly::Format::Parallel => "parallel",
-                                    }
-                                });
-                                ", tracks count: ";
-                                (midi.tracks.len());
-                            },
-                            Err(err) => td {
-                                "Failed to parse MIDI file: ";
-                                (err);
-                            },
-                        }
-                        td {
-                            (render_port_cell(uuid, source.associated_port, None));
-                        }
-                        td {
-                            (render_group_cell(uuid, &source.group));
-                        }
-                        td {
-                            input
-                                name="keybind"
-                                data-uuid=(uuid)
-                                onchange="update_key_binding(this)"
-                                type="text"
-                                hx-post=(format!("/midi/set-keybind/{uuid}"))
-                                hx-swap="none"
-                                value=(source.keybind);
-                        }
-                        td {
-                            (render_controls_cell(uuid, None));
-                        }
+        @for (uuid, block) in orderered_blocks.iter() {
+            section {
+                @match &block.content {
+                    Content::Midi(source) => {
+                        a href=(format!("/blocks/{uuid}")) { (source.file_name) }
+                        (render_port_cell(uuid, source.associated_port, None));
+                    }
+                    Content::SharedMemory { path } => {
+                        input
+                            name="path"
+                            data-uuid=(uuid)
+                            type="text"
+                            hx-post=("TODO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                            hx-swap="none"
+                            value=(path);
                     }
                 }
+
+                div { (render_group_cell(uuid, &block.group)) }
+
+                input
+                    name="keybind"
+                    data-uuid=(uuid)
+                    onchange="update_key_binding(this)"
+                    type="text"
+                    hx-post=(format!("/blocks/set-keybind/{uuid}"))
+                    hx-swap="none"
+                    value=(block.keybind);
+
+                (render_controls_cell(uuid, None))
             }
         }
     }
@@ -631,20 +605,22 @@ async fn midi_sources_render(app_state: State<Arc<AppState>>) -> Markup {
 
 fn render_controls_cell(uuid: &str, error_message: Option<String>) -> Markup {
     html! {
-        button hx-target="closest td" hx-post=(format!("/midi/play/{uuid}")) {
-            // https://en.wikipedia.org/wiki/Media_control_symbols
-            "▶"
-        }
-        button
-            hx-delete=(format!("/midi/{uuid}"))
-            hx-target="#midi-sources-list"
-            hx-swap="innerHTML"
-            {
-                "delete"
+        div {
+            button hx-target="closest div" hx-post=(format!("/blocks/play/{uuid}")) {
+                // https://en.wikipedia.org/wiki/Media_control_symbols
+                "▶"
             }
-        @if let Some(error_message) = error_message {
-            div style="color: red" {
-                (error_message)
+            button
+                hx-delete=(format!("/blocks/{uuid}"))
+                hx-target="#blocks-list"
+                hx-swap="innerHTML"
+                {
+                    "delete"
+                }
+            @if let Some(error_message) = error_message {
+                div style="color: red" {
+                    (error_message)
+                }
             }
         }
     }
@@ -655,8 +631,8 @@ fn render_port_cell(uuid: &str, associated_port: usize, error_message: Option<St
         input
             type="number" value=(format!("{}", associated_port + 1))
             name="port"
-            hx-target="closest td"
-            hx-post=(format!("/midi/set-port/{uuid}"));
+            hx-target="closest div"
+            hx-post=(format!("/blocks/set-port/{uuid}"));
 
         @if let Some(error_message) = error_message {
             div style="color: red" {
@@ -674,8 +650,8 @@ fn render_group_cell(uuid: &str, group: &str) -> Markup {
             pattern=(format!("(\\w| ){{0,{}}}", linky_groups::MAX_GROUP_ID_LENGTH))
             maxlength=(linky_groups::MAX_GROUP_ID_LENGTH)
             name="group"
-            hx-target="closest td"
-            hx-post=(format!("/midi/set-group/{uuid}"));
+            hx-target="closest div"
+            hx-post=(format!("/blocks/set-group/{uuid}"));
     }
 }
 
@@ -732,7 +708,7 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     button onclick="change_link_status()" {
                         "Change link status"
                     }
-                    button hx-post="/midi/interrupt" hx-swap="none" {
+                    button hx-post="/interrupt" hx-swap="none" {
                         "Interrupt MIDI"
                     }
                     div id="link-status" {
@@ -747,18 +723,27 @@ async fn index_handler(app_state: State<Arc<AppState>>) -> Markup {
                     div id="midi-ports" {
                         (midi_list_ports_handler(app_state.clone()).await);
                     }
-                    h2 { "MIDI sources" }
+                    h2 { "Blocks" }
                     form
-                        hx-put="/midi"
-                        hx-target="#midi-sources-list"
+                        hx-put="/blocks/midi"
+                        hx-target="#blocks-list"
                         hx-swap="innerHTML"
                         hx-encoding="multipart/form-data"
                     {
                         input id="midi-sources-input" name="files" type="file" multiple accept="audio/midi";
                         button { "Upload" }
                     }
-                    div id="midi-sources-list" {
-                        (midi_sources_render(app_state).await);
+                    form
+                        hx-put="/blocks/shared_memory"
+                        hx-target="#blocks-list"
+                        hx-swap="innerHTML"
+                    {
+                        input id="path" name="path" type="text";
+                        button { "Add" }
+                    }
+
+                    div id="blocks-list" {
+                        (render_blocks(app_state).await);
                     }
                 }
             }
@@ -794,10 +779,7 @@ async fn midi_list_ports_handler(State(app_state): State<Arc<AppState>>) -> Mark
 }
 
 #[axum::debug_handler]
-async fn midi_play_source_handler(
-    State(app_state): State<Arc<AppState>>,
-    Path(uuid): Path<String>,
-) -> Markup {
+async fn play_block(State(app_state): State<Arc<AppState>>, Path(uuid): Path<String>) -> Markup {
     let started_playing = audio_engine::play(app_state.clone(), &uuid).await;
     render_controls_cell(
         &uuid,
@@ -810,13 +792,47 @@ async fn midi_play_source_handler(
     )
 }
 
-async fn midi_interrupt(State(app_state): State<Arc<AppState>>) {
+async fn interrupt(State(app_state): State<Arc<AppState>>) {
     if let Err(error) = audio_engine::interrupt(app_state).await {
         tracing::error!("failed to interrupt: {error}");
     }
 }
 
-async fn midi_add_new_source_handler(
+#[derive(Deserialize)]
+struct AddSharedMemoryBlock {
+    path: String,
+}
+
+async fn add_new_shered_memory_block(
+    State(app_state): State<Arc<AppState>>,
+    Form(AddSharedMemoryBlock { path }): Form<AddSharedMemoryBlock>,
+) -> Markup {
+    let mut hasher = Sha1::new();
+    hasher.update(path.as_bytes());
+    let uuid = hex::encode(hasher.finalize());
+
+    let content = block::Content::SharedMemory { path };
+
+    let block = block::Block {
+        content,
+        group: Default::default(),
+        keybind: Default::default(),
+        order: Default::default(),
+    };
+
+    {
+        let blocks = &mut app_state.blocks.write().unwrap();
+        blocks.insert(format!("shm-{uuid}"), block);
+    }
+
+    if let Err(err) = app_state.remember_current_blocks() {
+        error!("add_new_shered_memory_block failed to remember current sources: {err:#}")
+    }
+
+    render_blocks(axum::extract::State(app_state)).await
+}
+
+async fn add_new_midi_source_block(
     State(app_state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Markup {
@@ -830,23 +846,28 @@ async fn midi_add_new_source_handler(
         hasher.update(&data);
         let uuid = hex::encode(hasher.finalize());
 
-        let midi_source = MidiSource {
+        let midi_source = block::MidiSource {
             bytes: data,
             file_name: file_name.clone(),
             associated_port: 0,
-            keybind: Default::default(),
-            group: Default::default(),
         };
 
-        let midi_sources = &mut app_state.sources.write().unwrap();
-        midi_sources.insert(uuid, midi_source);
+        let block = block::Block {
+            content: block::Content::Midi(midi_source),
+            group: Default::default(),
+            keybind: Default::default(),
+            order: Default::default(),
+        };
+
+        let midi_sources = &mut app_state.blocks.write().unwrap();
+        midi_sources.insert(format!("midi-{uuid}"), block);
     }
 
-    if let Err(err) = app_state.remember_current_sources() {
-        error!("midi_add_handler failed to remember current sources: {err:#}")
+    if let Err(err) = app_state.remember_current_blocks() {
+        error!("add_new_midi_source_block failed to remember current sources: {err:#}")
     }
 
-    midi_sources_render(axum::extract::State(app_state)).await
+    render_blocks(axum::extract::State(app_state)).await
 }
 
 async fn link_switch_enabled(State(app_state): State<Arc<AppState>>) {
