@@ -45,3 +45,7 @@ Maybe I'm just not intended target or I'm not experienced enough with it or boos
 
 On the other hand, writing servers in Rust is almost-painless, with great documentation and API design.
 
+## Patched libraries used by this project
+
+- [Rust wrapper for Ableton Link](https://github.com/RobertBendun/rusty_link), [original repository](https://github.com/anzbert/rusty_link)
+- [Ableton Link](https://github.com/RobertBendun/link), [original repository](https://github.com/Ableton/link)
