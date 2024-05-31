@@ -1,0 +1,206 @@
+= Architektura i harmonogram prac projektu Harmonia
+:toc:
+:author: Robert Bendun
+:email: robben@st.amu.edu.pl
+:revnumber: 1.1.0
+:revdate: 2024-01-25
+:nofooter:
+// Polish translation, courtesy of Łukasz Dziedziul <l.dziedziul@gmail.com> with updates via Matthew Blissett <mblissett@gbif.org>
+:appendix-caption: Dodatek
+:appendix-refsig: {appendix-caption}
+:caution-caption: Uwaga
+:chapter-signifier: Rozdział
+:chapter-refsig: {chapter-signifier}
+:example-caption: Przykład
+:figure-caption: Rysunek
+:important-caption: Ważne
+:last-update-label: Ostatnio zmodyfikowany
+ifdef::listing-caption[:listing-caption: Listing]
+ifdef::manname-title[:manname-title: Nazwa]
+:note-caption: Notka
+:part-signifier: Część
+:part-refsig: {part-signifier}
+ifdef::preface-title[:preface-title: Wstęp]
+:section-refsig: Sekcja
+:table-caption: Tabela
+:tip-caption: Sugestia
+:toc-title: Spis treści
+:untitled-label: Bez tytułu
+:version-label: Wersja
+:warning-caption: Ostrzeżenie
+// Użyty szablon: https://www.ecs.csun.edu/~rlingard/COMP684/Example2SoftArch.htm#Use-Case%20View
+
+== Historia wersji
+
+[cols="1,2,3,2"]
+|===
+| Osoba | Data | Zmiany | Wersja
+
+| Robert Bendun | 2024-01-25 | poprawka dat - terminy planowane na rok 2024 oznaczone były jako w 2023. Poprawiono błędne odnośniki na poprawne. | 1.1.0
+| Robert Bendun | 2023-12-03 | zmieniono "przypadki użycia" na poprawne "skrócone przypadki użycia"; drobne poprawki stylistyczne | 1.0.1
+| Robert Bendun | 2023-11-27 | Stworzenie dokumentu | 1.0.0
+|===
+
+Stosowane jest https://semver.org/lang/pl/[wersjonowanie semantyczne] oraz format dat https://en.wikipedia.org/wiki/ISO_8601[ISO 8601].
+
+== Wstęp
+
+Dokument prezentuje różnorodne omówienie architektury systemu, poprzez omówienie przypadków użycia, logicznych komponentów systemu, funkcjonujących w niej procesów oraz aplikacji w kontekście jej wdrożenia.
+Na podstawie zdefiniowanej architektury stworzono harmonogram prac.
+
+== Architektura
+
+=== Widok skróconych przypadków użycia
+
+Zdefiniowano następujące przypadki użycia:
+
+Zarządzanie fragmentu utworu (dodawanie, usuwanie, zmiana nazwy, uruchamianie wykonania)::
+Użytkownik ma możliwość dodania, usuwania oraz zmiany nazwy przypisanej utworowi.
+Wgrane utwory są zachowywane pomiędzy sesjami używania programu.
+Użytkownik może przesłać pliki audio i MIDI i wgrać jako utwory przy użyciu systemowego okienka eksploratora plików.
+Wgrane utwory można pobrać na dysk lokalny.
+Skróty klawiszowe uruchamiające fragmenty utworu i zarządzanie skrótami::
+Skróty klawiszowe są podstawowym mechanizmem uruchamiania fragmentów utworu.
+Możliwość ich przypisania powinna być dowolna w ramach możliwości przeglądarki.
+Ich wykorzystanie jest dostępne w dowolnym momencie aplikacji, z wykluczeniem edycji skrótów klawiszowych i pól tekstowych.
+Dostęp do fragmentów utworów innych węzłów::
+Lista znanych przez system węzłów w sieci, umożliwiająca odwiedzenie interfejsu graficznego węzła.
+Umożliwia prostą manualną synchronizację poprzez możliwość sklonowania listy fragmentów innego węzła, pobranie pojedyńczych fragmentów lub złączenie własnej listy fragmentów z listą innego węzła.
+Identyfikacja własnego adresu::
+Umożliwia łatwe umożliwienie dostępu do swojej instancji z innego węzła.
+Blokada edycji listy utworów oraz skrótów klawiszowych::
+Zagwarantowanie bezpieczeństwa konfiguracji w trakcie występu.
+Przypisanie urządzenia wyjściowego do fragmentu utworu::
+Różne fragmenty utworu mogą być realizowane na różnych urządzeniach wyjściowych audio/MIDI.
+
+// * synchroniczny start wykonywania fragmentu utworu w 4 możliwych przypadkach:
+// ** w zależności od momentu rozpoczęcia utworu:
+// *** start w trakcie wykonywania innego fragmentu (system wykonuje fragment i synchronizuje rozpoczęcie nowego fragmentu)
+// *** start na samym początku wykonywania utworu (system oczekuje na rozpoczęcie)
+// ** w zależności od grupy rozpoczynającej start
+// *** grupa obejmuje całą orkiestrę rozpoczyna (wszystkie osoby co chcą rozpocząć rozpoczynają)
+// *** podgrupa rozpoczyna, chcąca zachować synchronizację z całą orkiestrą, ale mieć synchronizację w ramach podgrupy
+
+=== Widok logiczny
+
+Zdefiniowano następujące komponenty systemu:
+
+* realizacja interfejsu graficznego w postaci serwera HTTP
+** widoki realizowane w postaci funkcji tworzących fragmenty pełnego dokumentu HTML opisującego interfejs graficzny, realizowane przez statyczną konkatenację oraz dynamiczną przy pomocy biblioteki https://htmx.org/[htmx]
+*** lista zewnętrznych adresów IP węzła wykonującego aplikację
+*** wizualizacja statusu systemu synchronizacji
+*** panel zarządzania fragmentami utworu (dodawanie, usuwanie, przypisanie skrótów klawiszowych, zmiana nazwy)
+*** widok listy dostępnych urządzeń wyjściowych audio i MIDI
+** zachowanie stanu pomiędzy sesjami - zapisywanie każdych zmian i ładowanie stanu przy uruchomieniu aplikacji
+* wątek audio wykonujący fragment z użyciem mechanizmu synchronizacji
+** realizujący wykonanie utworu w postaci wątku wysyłającego komunikaty do interfejsu wyjściowego MIDI na podstawie linii czasu wyznaczonej przez synchronizację
+** czyszczący ustawiony stan na wyjściu MIDI w przypadku zmiany utworu (zatrzymanie odtworzonych nut)
+* mechanizm synchronizacji: rozbudowana biblioteka https://github.com/Ableton/link[Ableton/Link]
+** bazowa biblioteka Ableton/Link
+** nadbudowa w postaci podsystemu realizującego synchronizację wielu grup
+* serwer mDNS udostępniający podstawowe informacje o instancji
+
+=== Widok procesu
+
+Widok procesu jest rozbudową widoku logicznego, o wskazanie interakcji pomiędzy wyróżnionymi komponentami systemu.
+Zarządzanie stanem jest ważne w Harmonii z uwagi na bycie wielowątkową aplikacją czasu rzeczywistego.
+
+[cols="2,1,1,1,1"]
+|===
+| Stan | Interfejs graficzny | Wątek audio | Mechanizm synchronizacji | mDNS
+
+| realizowana linia czasowa    | odczyt       | odczyt | odczyt/zapis | -
+| start/stop, przydział grup   | odczyt/zapis | -      | odczyt/zapis | -
+| lista utworów                | odczyt/zapis | odczyt | -            | -
+| plik zrzutu stanu            | odczyt/zapis | -      | -            | -
+| lista interfejsów audio/MIDI | odczyt/zapis | odczyt | -            | -
+| nazwa instancji              | odczyt/zapis | -      | -            | odczyt
+| lista pozostałych instancji  | odczyt       | -      | -            | odczyt/zapis
+|===
+
+=== Widok wdrożenia
+
+Wdrożenie składa się z 1 instancji aplikacji Harmonia uruchomionej w ramach 1 węzła oraz możliwych pozostałych węzłów z którymi wykonanie będzie synchronizowane.
+
+Harmonia propaguje swój stan na każdym z interfejsów sieciowych z wykorzystaniem systemu multicast.
+Dzięki temu, że każdy węzeł z uruchomioną instancją aplikacji Harmonia ustala i propaguje stan na każdym interfejsie sieciowym,
+węzły należące do wielu sieci umożliwiają stworzenie wspólnego stanu synchronizacji dla wszystkich dostępnych sieci.
+
+Interfejs graficzny wyświetlany jest w ramach przeglądarki internetowej wspierającej język JavaScript,
+udostępniony w ramach lokalnego serwera Harmonii.
+Aplikacja wspiera systemy GNU/Linux, Microsoft Windows oraz macOS.
+
+// TODO: == Wydajność i rozmiar
+// TODO: == Jakość
+
+== Harmonogram prac
+
+Harmonogram prac przewiduje dwa możliwe scenariusze, w celu wysokiej szansy zapobieganiu największego ryzyka - problemów z biblioteką Ableton/Link.
+
+Główny:: Pomyślne wykorzystanie rozbudowanej biblioteki Ableton/Link
+Alternatywny:: Problem z rozbudową biblioteki Ableton/Link lub problem z implementacją partycypacyjnego startu
+
+
+[cols="1,2,2"]
+|===
+| Data | Główny | Alternatywny
+
+| 2023-03 - 2023-07
+a|
+Realizował prototyp #1, obejmujący użycie biblioteki Ableton/Link.
+
+* Prototyp aplikacji z użyciem natywnego systemu rysowania okienek
+* Integracja z biblioteką Ableton/Link w ramach prototypu #1
+a| nie dotyczy
+
+| 2023-09 - 2023-10
+a|
+Rozpoczyna realizację prototypu #2, niezależnego od prototypu #1.
+Prototyp #1 został porzucony, a jego potencjał badawczy wykorzystany.
+
+* Prototyp interfejsu graficznego realizujący następujące widoki:
+** informacje o węźle (adresy IP, interfejsy audio)
+** informacje o synchronizacji
+** zarządzanie listą fragmentów utworu
+* Zrzuty stanu (zachowanie stanu pomiędzy sesjami)
+* Wsparcie fragmentów MIDI: dodawanie, wykonywanie podstawowych instrukcji MIDI, usuwanie
+* Wsparcie synchronizacji: synchronizacja orkiestry, zarówno startu jak i wykonania
+| nie dotyczy
+
+| 2023-11
+a|
+* Rozbudowa mechanizmu wykonania oraz synchronizacji
+* Wewnętrzne testy
+| nie dotyczy
+
+| 2023-12
+a|
+* Testy synchronizacji utworów MIDI z orkiestrą laptopową Lambda Ensamble
+* Rozpoczecie prac nad synchronizacją podgrup
+a|
+* Opracowanie autorskiego protokołu na podstawie wcześniejszej znajomości biblioteki Ableton/Link
+
+| 2024-01 - 2024-02
+a|
+* Synchronizacja wykonania utworu audio
+* Testy synchronizacji MIDI w ramach podgrup z orkiestrą laptopową Lambda Ensamble
+a|
+* Implementacja oraz wewnętrzne testy autorskiego protokołu
+
+| 2024-03
+a|
+* Rozbudowa wizualna interfejsu graficznego
+a|
+* Testy synchronizacji MIDI z orkiestrą laptopową (orkiestra + podgrupy)
+* Implementacja synchronizacji audio
+| 2024-04
+| nie dotyczy
+a|
+* Implementacja synchronizacji audio
+* Wewnętrzne testy
+| 2024-05
+| nie dotyczy
+a|
+* Rozbudowa wizualna interfejsu graficznego
+|===
+

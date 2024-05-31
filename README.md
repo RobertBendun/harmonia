@@ -78,6 +78,10 @@ They are referenced in [Cargo.toml](Cargo.toml) and [Cargo.lock](Cargo.lock) (re
 Patching is required to break abstraction inside Ableton Link and don't reimplement it just to expose hidden state.
 Further Harmonia versions may leave Link for custom solution but for now patched Link fulfills requirements perfectly.
 
+## Harmonia as R&D on AMU University
+
+See [uam/README.md](uam/README.md).
+
 ## Acknowledgements
 
 This project couldn't become what it is without support and mentorship from:
