@@ -12,6 +12,10 @@ Go to [releases page](https://github.com/RobertBendun/harmonia/releases) and dow
 cargo run
 ```
 
+Then go to the address pointed by the Harmonia binary (by default: [`http://localhost:8080`](http://localhost:8080).
+
+See section "Compiling" below for instructions for your operating system.
+
 Remember to allow any traffic from Harmonia in your firewall.
 
 You can test it using [TEST-PLAN.md](./TEST-PLAN.md).
@@ -22,6 +26,16 @@ Developer documentation can be generated and viewed using `cargo`:
 ```console
 cargo doc --open --document-private-items --bin harmonia --lib
 ```
+
+### Compiling
+
+Ubuntu 22.04 users, install this packages first:
+
+```
+apt install -y libasound2-dev cargo pkg-config cmake g++ clang git
+```
+
+Windows users, C++ capable Visual Studio, CMake and Rust toolchain is required.
 
 ## Todos
 
