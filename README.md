@@ -54,6 +54,10 @@ Experimental support:
 * macOS,
 * other Linux distributions (compilation on target system recommended).
 
+Currently the main blocker for full macOS support is lack of resources - to properly test Harmonia at least two ARM macOS laptops would be required that are still supported by Apple.
+
+As for Linux distribution, the diversity of sound systems (and GLIBC versions) require further research.
+
 ## Why Rust?
 
 Since this library will be used with [Ableton/Link](https://github.com/Ableton/link) why write it in Rust?
@@ -68,3 +72,18 @@ On the other hand, writing servers in Rust is almost-painless, with great docume
 
 - [Rust wrapper for Ableton Link](https://github.com/RobertBendun/rusty_link), [original repository](https://github.com/anzbert/rusty_link)
 - [Ableton Link](https://github.com/RobertBendun/link), [original repository](https://github.com/Ableton/link)
+
+They are referenced in [Cargo.toml](Cargo.toml) and [Cargo.lock](Cargo.lock) (recursivly, Rust wrapper references patched Ableton Link) files with links to the patched repositories.
+
+Patching is required to break abstraction inside Ableton Link and don't reimplement it just to expose hidden state.
+Further Harmonia versions may leave Link for custom solution but for now patched Link fulfills requirements perfectly.
+
+## Acknowledgements
+
+This project couldn't become what it is without support and mentorship from:
+
+- prof. UAM dr hab. Michał Hanćkowiak,
+- prof. UAM dr hab. Maciej Grześkowiak,
+- prof. UAM dr hab. Jacek Marciniak,
+- and Lambda Ensamble laptop orchestra.
+
