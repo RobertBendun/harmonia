@@ -84,6 +84,7 @@ aside label {
 	display: block;
 	width: 100%;
 	text-align: center;
+	cursor: pointer;
 
 	background: none;
 	border: none;
@@ -95,9 +96,10 @@ aside label {
 	transition: text-shadow 300ms ease-in-out;
 }
 
+aside label:hover,
+aside label:focus,
 aside button:hover,
 aside button:focus {
-	cursor: pointer;
 	text-shadow: #FC0 1px 0 10px;
 }
 

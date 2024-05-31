@@ -2,7 +2,26 @@
 
 __This project is currently beeing developed. It is not recommended to use it now. Wait for first release__
 
-Harmonia is an interface for playing synchronized MIDI using [Ableton/Link](https://github.com/Ableton/link).
+Harmonia is an interface for playing synchronized MIDI using modified [Ableton/Link](https://github.com/Ableton/link), dedicated for laptop orchestra.
+
+## Usage
+
+Go to [releases page](https://github.com/RobertBendun/harmonia/releases) and download the newest one for your operating system or build and run yourself:
+
+```console
+cargo run
+```
+
+Remember to allow any traffic from Harmonia in your firewall.
+
+You can test it using [TEST-PLAN.md](./TEST-PLAN.md).
+This is currently also the instruction on how to use Harmonia.
+
+Developer documentation can be generated and viewed using `cargo`:
+
+```console
+cargo doc --open --document-private-items --bin harmonia --lib
+```
 
 ## Todos
 

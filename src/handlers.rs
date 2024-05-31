@@ -81,6 +81,8 @@ pub async fn index(app_state: State<Arc<AppState>>) -> Markup {
                             type="file"
                             id="midi"
                             name="midi"
+                            multiple
+                            accept="audio/midi"
                             hx-put="/blocks/midi"
                             hx-target="#blocks"
                             hx-swap="innerHTML"
