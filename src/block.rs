@@ -1,3 +1,10 @@
+//! Blocks definition - basic units of something playable in Harmonia
+//!
+//! Harmonia blocks are the basic building block of Harmonia execution.
+//! They store the common state (group name, associated keybind and other metadata)
+//! and specialized information about the thing that will be played. See [Content] for currently
+//! playable types in Harmonia.
+
 use serde::{Deserialize, Serialize};
 
 /// Representation of anything that can be played with Harmonia
@@ -17,10 +24,18 @@ pub struct Block {
 }
 
 /// Different kinds of contents that can be played with Harmonia
+///
+/// This type is consumed in [audio_engine], produced in UI [handlers].
+/// Here is only the description, the usage is defined in [audio_engine] implementation.
+///
+/// [audio_engine]: crate::audio_engine
+/// [handlers]: crate::handlers
 #[derive(Serialize, Deserialize, Clone)]
 pub enum Content {
+    /// MIDI file itself with metadata
     Midi(MidiSource),
 
+    /// Path pointing to shared memory
     SharedMemory { path: String },
 }
 

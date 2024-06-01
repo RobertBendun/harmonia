@@ -1,3 +1,18 @@
+//! Synchronized player for laptop orchestra
+//!
+//! Harmonia is a music player indended for the use in distributed system of laptop orchestra,
+//! where orchestra members want to synchronize their performance, especially in the context of
+//! indirect control like MIDI files, algorythmic music or audio files.
+//!
+//! Harmonia consists of three main components:
+//!
+//! * Synchronization layer, based on [Ableton Link][rusty_link] and it's extension [linky_groups]
+//! * Simple user interface, rendered in the browser, build with [axum], [htmx], [maud]
+//! * Audio engine, coordinating the execution of played music [audio_engine]
+//!
+//! [htmx]: https://htmx.org/
+//! [audio_engine]: crate::audio_engine
+
 use anyhow::Context;
 use axum::{
     extract::{
@@ -32,9 +47,13 @@ mod block;
 mod handlers;
 mod public;
 
+
+/// Filename under which Harmonia stores blocks, user info and other metadata
 const STATE_PATH: &str = "harmonia_state.bson";
 
+/// All MIDI output connections that user may use
 pub struct MidiConnection {
+    /// Currently known [MidiOutputPort]s
     pub ports: Vec<MidiOutputPort>,
 }
 
@@ -49,6 +68,7 @@ impl Default for MidiConnection {
 }
 
 impl MidiConnection {
+    /// Update list of currently known [MidiOutputPort]s
     pub fn refresh(&mut self) {
         // TODO: Is it valid to create a new MidiOutput per use? Maybe we should create only one
         // MidiOutput port per application.
@@ -57,18 +77,52 @@ impl MidiConnection {
     }
 }
 
+/// Shared state between major modules of Harmonia
+///
+/// Collection of references to particular state, each behind it's own synchronization mechanism to
+/// allow as concurrent access as possible.
 pub struct AppState {
+    /// List of all `blocks` (representations of anything that Harmonia can "play")
+    ///
+    /// Indexed by unique identifier that is created based on the type of block and hash of the
+    /// content. Main source for information both for UI and [audio_engine]. Hold exclusive locks
+    /// as little as possible.
+    ///
+    /// [audio_engine]: crate::audio_engine
     pub blocks: RwLock<HashMap<String, block::Block>>,
+
+    /// List of all MIDI connections
     pub connection: RwLock<MidiConnection>,
+
+    /// Reference to [Ableton Link][rusty_link], base for synchronization mechanism.
+    ///
+    /// Utilised by [linky_groups] for synchronized start and [audio_engine] as a source of time
     pub link: Arc<AblLink>,
+
+    /// [audio_engine] shared state that allows to send commands from UI to engine (and back)
     pub audio_engine: RwLock<AudioEngine>,
+
+
     // TODO: Be better
+    /// Identifier of currently playing block, used in UI
     pub currently_playing_uuid: RwLock<Option<String>>,
+
+    /// Progress on currently playing block in form `(done, len)`
+    ///
+    /// For infinite blocks (like [block::Content::SharedMemory]) `(0, 0)`
     pub current_playing_progress: RwLock<(usize, usize)>,
+
+    /// Port on which to serve HTTP UI
     pub port: u16,
+
+    /// [linky_groups] synchronization mechanism
     pub groups: Option<linky_groups::Groups>,
 }
 
+/// Path to the cache location, based on OS convention
+///
+/// Should conform to XDG_BASE_DIRECTORIES or any other particular operating system standard for
+/// cache storage.
 fn cache_path() -> PathBuf {
     let path = dirs::cache_dir()
         .expect("documentation states that this function should work on all platforms")
@@ -77,11 +131,18 @@ fn cache_path() -> PathBuf {
     path
 }
 
+/// Path to the logs location
+///
+/// To simplify experience for non-technical users it is stored in the same location as cache,
+/// which makes only 1 directory entry when user needs to report bugs.
 fn log_path() -> PathBuf {
     cache_path()
 }
 
 impl AppState {
+    /// Crate new [AppState] (once per Harmonia instance)
+    ///
+    /// Creates Ableton Link session and [linky_groups] session
     fn new(port: u16) -> Self {
         let link = Arc::new(AblLink::new(120.));
         Self {
@@ -96,6 +157,7 @@ impl AppState {
         }
     }
 
+    /// Load stored [AppState] from [STATE_PATH]
     fn recollect_previous_blocks(&self) -> Result<(), anyhow::Error> {
         let path = cache_path().join(STATE_PATH);
         let file = std::fs::File::open(path).context("opening state file")?;
@@ -108,6 +170,7 @@ impl AppState {
         Ok(())
     }
 
+    /// Store [AppState] in [STATE_PATH]
     fn remember_current_blocks(&self) -> Result<(), anyhow::Error> {
         let sources = self.blocks.read().unwrap();
         let path = cache_path().join(STATE_PATH);
@@ -138,6 +201,9 @@ struct Args {
     port: u16,
 }
 
+/// Initialize Harmonia logging system
+///
+/// Harmonia logs all the events inside log files, each file timestamped by day.
 fn setup_logging_system() -> tracing_appender::non_blocking::WorkerGuard {
     let log_file_appender = tracing_appender::rolling::daily(log_path(), "logs");
     let (log_file_appender, guard) = tracing_appender::non_blocking(log_file_appender);
@@ -159,6 +225,14 @@ fn setup_logging_system() -> tracing_appender::non_blocking::WorkerGuard {
     guard
 }
 
+/// Initialize Harmonia application
+///
+/// Setup all synchronization mechanisms, HTTP server, recollect stored [AppState] from [cache],
+/// enable [logging mechanism][logs], mount [handlers] to HTTP serer, listen at provided HTTP port
+/// and ensure proper cleanup on exit.
+///
+/// [cache]: cache_path()
+/// [logs]: setup_logging_system()
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
@@ -276,6 +350,7 @@ async fn main() -> ExitCode {
 }
 
 // For expanding this websocket buisness see: https://github.com/tokio-rs/axum/blob/main/examples/websockets/src/main.rs
+/// Handler transferring communication from HTTP to WebSockets
 async fn link_status_websocket_handler(
     ws: WebSocketUpgrade,
     user_agent: Option<TypedHeader<headers::UserAgent>>,
@@ -291,6 +366,13 @@ async fn link_status_websocket_handler(
     ws.on_upgrade(move |socket| link_status_websocket_loop(socket, addr, app_state))
 }
 
+/// Loop that sends over WebSocket current state of Harmonia
+///
+/// This usage of WebSockets is mostly intended to not distract HTTP server with constant requests
+/// about application state and allow Harmonia to dictate the tempo of changes that is shown in UI.
+/// For constantly updating time the second part is not as important as the first one, but in case
+/// of more distinct and slow updates (like from [audio_engine]) this mechanism would be perfect
+/// (and probably will be included in future release).
 async fn link_status_websocket_loop(
     mut socket: WebSocket,
     addr: SocketAddr,

@@ -1,3 +1,7 @@
+//! Playground to test [linky_groups] using terminal interface.
+//!
+//! It's deprectaed and will be removed in future release.
+
 use crossterm::{
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     execute, terminal,

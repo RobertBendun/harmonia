@@ -24,7 +24,7 @@ This is currently also the instruction on how to use Harmonia.
 Developer documentation can be generated and viewed using `cargo`:
 
 ```console
-cargo doc --open --document-private-items --bin harmonia --lib
+cargo doc --open --document-private-items
 ```
 
 ### Compiling

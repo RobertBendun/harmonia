@@ -1,18 +1,35 @@
+//! Participatory synchronization mechanism for laptop orchestras
+//!
+//! This library is part of [harmonia](../harmonia/index.html) project.
+//! It implements participatory synchronization mechanism based on patched [Ableton Link][rusty_link] library.
+//!
+//! The library satisfies this requirements:
+//!
+//! * participatory - user chooses to join the orchestra, not orchestra forces them to start
+//! * bottom-up - there is no central server or chosen leader, all hosts participate to create
+//! shared common synchronized state
+//! * minimal configuration - users need to provide shared group name, that they are going to
+//! synchronize under
+
 use rusty_link::{AblLink, SessionState};
 use serde::{Deserialize, Serialize};
 use std::{sync::atomic, sync::Arc};
 
 mod net;
 
+/// Max length of the group name
 pub const MAX_GROUP_ID_LENGTH: usize = 15;
 
+/// ID that defines the group.
 type GroupId = [u8; MAX_GROUP_ID_LENGTH];
 
+/// Parsed Network Packet describing synchronization state
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 struct GroupFrame {
     /// Magic sequence distinguishing packets
     magic: [u8; 4],
 
+    /// Version of the packet
     version: u8,
 
     /// Group identificator used to distinguish between concurrently going groups
@@ -45,6 +62,7 @@ impl std::fmt::Display for GroupFrame {
 }
 
 impl GroupFrame {
+    /// Create new packet based on `group_id` from user and `timestamp` from [link][rusty_link]
     fn new(group_id: GroupId, timestamp: i64) -> Self {
         Self {
             magic: *b"grup",
@@ -54,11 +72,15 @@ impl GroupFrame {
         }
     }
 
+    /// Check if current implementation supports this packet.
+    ///
+    /// Allows for backwards compatibility in future releases
     fn is_supported(&self) -> bool {
         self.magic == *b"grup" && self.version == 1
     }
 }
 
+/// State for Group synchronization system
 pub struct Groups {
     /// Listening task that receives group messages
     listener: tokio::task::JoinHandle<()>,
@@ -79,6 +101,7 @@ pub struct Groups {
     is_playing: Arc<atomic::AtomicBool>,
 }
 
+/// All the errors that this crate may produce
 #[derive(Debug)]
 pub enum Error {
     GroupIdTooLong,
@@ -86,6 +109,7 @@ pub enum Error {
 
 impl Groups {
     // TODO: To avoid confusion make group_id_str case insensitive.
+    /// Start or join the group pointed by the user
     pub async fn start(&self, group_id_str: &str) -> Result<(), Error> {
         let mut group_id: GroupId = Default::default();
         if group_id_str.len() > group_id.len() {
@@ -103,6 +127,7 @@ impl Groups {
         Ok(())
     }
 
+    /// Stop performing in current group
     pub async fn stop(&self) {
         self.actions
             .send(Action::Stop)
@@ -110,10 +135,14 @@ impl Groups {
             .expect("receiver will never be closed unless in destructor");
     }
 
+    /// Check if we are playing
     pub fn is_playing(&self) -> bool {
         self.is_playing.load(atomic::Ordering::SeqCst)
     }
 
+    /// Stop group synchronization mechanism
+    ///
+    /// Only used in graceful shoutdown
     pub async fn shutdown(self) {
         tracing::debug!("Issuing shutdown");
         self.cancel.send(()).await.unwrap();
@@ -124,6 +153,7 @@ impl Groups {
     }
 }
 
+/// Action is the description of requests for group synchronization worker
 #[derive(Debug)]
 enum Action {
     /// Start playing in the provided group
@@ -139,6 +169,9 @@ enum Action {
     Quit,
 }
 
+/// The main loop of synchronization worker
+///
+/// Receives current state and based on it decides if join the group, start a new one etc.
 async fn negotatior(
     mut state: tokio::sync::mpsc::Receiver<Action>,
     link: Arc<AblLink>,
@@ -224,6 +257,7 @@ async fn negotatior(
     }
 }
 
+/// Create, initialize and start listening for group synchronization mechanism
 pub fn listen(link: std::sync::Arc<rusty_link::AblLink>) -> Groups {
     let connection = Arc::new(net::Sockets::bind());
     let (cancel, wait_for_cancel) = tokio::sync::mpsc::channel(1);

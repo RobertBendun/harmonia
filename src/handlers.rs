@@ -1,3 +1,15 @@
+//! Routes used in router setup in [crate::main].
+//!
+//! Middle man between UI, [audio_engine] and synchronization mechanisms.
+//!
+//! All of the HTTP routes (without WebSockets) are located in this module.
+//! Handlers return HTML using [maud] templating library. Some functions are partials that are only
+//! used inside this module, some are exposed to the [axum] router to be accessible by [HTMX].
+//!
+//! [HTMX]: https://htmx.org
+//!
+//! Structs inside this file are only schemas for HTTP forms.
+
 // TODO:  This triplets of {SetX, midi_set_x_for_source, render_x_cell} maybe should be
 // consolidated
 
@@ -19,6 +31,7 @@ use sha1::{Digest, Sha1};
 use std::{path::PathBuf, sync::Arc};
 use tracing::{error, info};
 
+/// Main route, "/" handler, renders whole interface as HTML
 pub async fn index(app_state: State<Arc<AppState>>) -> Markup {
     html! {
         (DOCTYPE);
@@ -129,6 +142,7 @@ pub async fn index(app_state: State<Arc<AppState>>) -> Markup {
     }
 }
 
+/// Renders synchronization state, including current time (beats)
 pub async fn runtime_status(app_state: State<Arc<AppState>>) -> Markup {
     let mut session_state = SessionState::default();
     let active = app_state.link.is_enabled();
@@ -153,11 +167,16 @@ pub async fn runtime_status(app_state: State<Arc<AppState>>) -> Markup {
     }
 }
 
+/// Renders playing state or nothing (if nothing is played)
 async fn playing_status(app_state: State<Arc<AppState>>) -> Markup {
     let _ = app_state;
     html! {}
 }
 
+/// Renders information about the system
+///
+/// Since Harmonia is by default accessible on all interfaces, a convenient way to use share files
+/// is to ask colleague what IP address they have and quickly enter their instance in browser
 async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
     let port = app_state.port;
     let mut interfaces = match local_ip_address::list_afinet_netifas() {
@@ -207,6 +226,7 @@ async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
     }
 }
 
+/// Render list of currently held ports in [AppState]
 pub async fn midi_ports(State(app_state): State<Arc<AppState>>) -> Markup {
     let out = MidiOutput::new("harmonia").unwrap();
 
@@ -227,6 +247,7 @@ pub async fn midi_ports(State(app_state): State<Arc<AppState>>) -> Markup {
     }
 }
 
+/// Render currently held blocks
 async fn blocks(app_state: State<Arc<AppState>>) -> Markup {
     use crate::block::Content;
 
@@ -285,6 +306,7 @@ async fn blocks(app_state: State<Arc<AppState>>) -> Markup {
     }
 }
 
+/// Render group input
 fn group(uuid: &str, group: &str) -> Markup {
     html! {
         input
@@ -298,11 +320,13 @@ fn group(uuid: &str, group: &str) -> Markup {
     }
 }
 
+/// Schema for setting group for block request
 #[derive(Deserialize)]
 pub struct SetGroup {
     pub group: String,
 }
 
+/// Set group for given block
 pub async fn set_group(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
@@ -343,6 +367,7 @@ pub async fn set_group(
     response
 }
 
+/// Render current keybind for block in input form
 fn keybind(uuid: &str, keybind: &str) -> Markup {
     html! {
         input
@@ -357,11 +382,13 @@ fn keybind(uuid: &str, keybind: &str) -> Markup {
     }
 }
 
+/// Schema for request that sets keybind for given block
 #[derive(Deserialize)]
 pub struct SetKeybind {
     pub keybind: String,
 }
 
+/// Sets keybind for given block
 pub async fn set_keybind(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
@@ -386,6 +413,8 @@ pub async fn set_keybind(
     StatusCode::OK
 }
 
+// TODO: Should be select
+/// Renders port input for MIDI port
 fn port_cell(uuid: &str, associated_port: usize) -> Markup {
     html! {
         input
@@ -396,11 +425,13 @@ fn port_cell(uuid: &str, associated_port: usize) -> Markup {
     }
 }
 
+/// Schema for port selection for block containing MIDI
 #[derive(Deserialize)]
 pub struct SetPort {
     pub port: usize,
 }
 
+/// Set port for MIDI block
 pub async fn set_port_for_midi(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
@@ -430,6 +461,7 @@ pub async fn set_port_for_midi(
     Ok(port_cell(&uuid, midi.associated_port))
 }
 
+/// Responds with content of block if block had any
 pub async fn download_block_content(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
@@ -467,6 +499,7 @@ pub async fn download_block_content(
     }
 }
 
+/// Removes block based on ID and caches currently held blocks
 pub async fn remove_block(app_state: State<Arc<AppState>>, Path(uuid): Path<String>) -> Markup {
     {
         let mut sources = app_state.blocks.write().unwrap();
@@ -479,21 +512,25 @@ pub async fn remove_block(app_state: State<Arc<AppState>>, Path(uuid): Path<Stri
     blocks(app_state).await
 }
 
+/// Starts playing given block
 pub async fn play(State(app_state): State<Arc<AppState>>, Path(uuid): Path<String>) {
     let _ = audio_engine::play(app_state.clone(), &uuid).await;
 }
 
+/// Interrupts any currently played block (or does nothing)
 pub async fn interrupt(State(app_state): State<Arc<AppState>>) {
     if let Err(error) = audio_engine::interrupt(app_state).await {
         tracing::error!("failed to interrupt: {error}");
     }
 }
 
+/// Schema for creation of new shared memory block
 #[derive(Deserialize)]
 pub struct AddSharedMemoryBlock {
     path: String,
 }
 
+/// Add new shared memory block and cache list of blocks
 pub async fn add_new_shered_memory_block(
     State(app_state): State<Arc<AppState>>,
     Form(AddSharedMemoryBlock { path }): Form<AddSharedMemoryBlock>,
@@ -523,6 +560,7 @@ pub async fn add_new_shered_memory_block(
     blocks(axum::extract::State(app_state)).await
 }
 
+/// Adds new MIDI block(s) based on the provided files in HTML Form
 pub async fn add_new_midi_source_block(
     State(app_state): State<Arc<AppState>>,
     mut multipart: Multipart,

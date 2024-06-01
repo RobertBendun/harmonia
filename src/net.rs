@@ -1,6 +1,14 @@
+//! Abstraction over collection of sockets
+//!
+//! This module is used to simplify interaction with group of sockets.
+//! Group of sockets represent all of the IPv4 interfaces that can be binded to
+//! and listened on.
+// TODO: Support IPv6?
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 
+
+/// Collection of references to sockets on all IPv4 interfaces
 pub struct Sockets {
     pub sockets: Vec<Arc<tokio::net::UdpSocket>>,
 }
@@ -27,6 +35,7 @@ impl Sockets {
         Self { sockets }
     }
 
+    /// Send group frame via all sockets (= all interfaces)
     pub async fn send(&self, frame: crate::GroupFrame) {
         tracing::debug!("sending packet: {frame}");
         let packet = bincode::serialize(&frame).unwrap();
@@ -39,6 +48,7 @@ impl Sockets {
         }
     }
 
+    /// Listen on all interfaces and send incoming packets to negotiator.
     pub async fn listen(
         &self,
         state: tokio::sync::mpsc::Sender<crate::Action>,
@@ -92,6 +102,7 @@ impl Sockets {
     }
 }
 
+/// Get all IPv4 interface addresses on local machine
 fn get_current_ipv4_addresses() -> Vec<Ipv4Addr> {
     local_ip_address::list_afinet_netifas()
         .unwrap()
@@ -105,11 +116,14 @@ fn get_current_ipv4_addresses() -> Vec<Ipv4Addr> {
         .collect()
 }
 
+
+/// Get multicast address for linky_groups communication
 fn multicast() -> std::net::SocketAddr {
     std::net::SocketAddr::new(Ipv4Addr::new(224, 76, 78, 75).into(), 20810)
 }
 
 // TODO: Support IPv6
+/// Create UDP multicast capable socket for given IPv4 interface.
 fn open_multicast(interface: Ipv4Addr) -> std::io::Result<tokio::net::UdpSocket> {
     let multicast = multicast();
 
