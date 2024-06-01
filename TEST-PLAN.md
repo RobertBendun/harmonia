@@ -111,4 +111,29 @@ Instead it has builtin software synthesiser that is not recommended for any use 
 1. Click "Delete mode" button again, delete icons should hide
 1. Ensure that after page reload the deleted item is not shown on the list
 
+## Multiple machine tests
 
+Test are conducted to ensure that Harmonia reaches audibly better execution results then non synchronized solutions.
+Additionally the communication components are tested between the instances, including file sharing based on IP addresses.
+
+Prerequisites:
+
+* 3 laptops with running Harmonia instances, as similar as possible. Different machines can have different non-deterministic delays based on operating system, meaning that in practice synchronization will never be perfect
+* Local network connecting all of the laptops above
+
+### Test Case: Synchronization of MIDI files
+
+1. Clean state on all machines by following _Test Case: Delete Mode_
+1. On one of the machines add MIDI files based on _Test Case: Adding new MIDI file_
+1. On the same machine check its IP address in local network in collapsible section "System information". Enter this IP with port used by this instance into the browser on other machines, download MIDI files by pressing on filenames and load them into this instances.
+1. Ensure that every instances has the same files by using checksums.
+
+### Test Case: Synchronus start
+
+1. Complete _Test Case: Synchronization of MIDI files_ to have the same setup on all machines
+1. Ensure that `Group` field is not filled for `A1.mid` on all devices
+1. Start `A1.mid` on all devices. Performance should not be synchronous due to human error
+1. Interrupt performance on all devices
+1. Fill group field with the same name on all devices (for example "X")
+1. Start again, performance should be audibly synchronous.
+1. Interrupt and start again on one of the devices, it should join already playing session
