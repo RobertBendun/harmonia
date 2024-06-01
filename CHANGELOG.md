@@ -7,11 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2024-06-01
+
 ### Added
 
 - Developer documentation
 - Multi machine Harmonia testing plan
 - Connection to R&D project at AMU Poznań
+
+### Fixed
+
+- Wrong path prevented port number from beeing set for MIDI block
 
 ## [0.2.0] - 2024-05-31
 
@@ -26,10 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Introduced completely new "modern" UI
 - Renamed "MIDI Sources" to "Blocks" to account for new forms of musical actions
 - Declared support for macOS as experimental due to limited testing
-
-### Fixed
-
-- Wrong path prevented port number from beeing set for MIDI block
 
 ## [0.1.2] - 2024-04-26
 
