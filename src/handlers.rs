@@ -421,7 +421,8 @@ fn port_cell(uuid: &str, associated_port: usize) -> Markup {
             type="number" value=(format!("{}", associated_port + 1))
             name="port"
             hx-target="this"
-            hx-post=(format!("/blocks/set-port/{uuid}"));
+            hx-swap="outerHTML"
+            hx-post=(format!("/blocks/midi/set-port/{uuid}"));
     }
 }
 

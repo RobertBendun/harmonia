@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed "MIDI Sources" to "Blocks" to account for new forms of musical actions
 - Declared support for macOS as experimental due to limited testing
 
+### Fixed
+
+- Wrong path prevented port number from beeing set for MIDI block
+
 ## [0.1.2] - 2024-04-26
 
 ### Added
