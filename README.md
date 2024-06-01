@@ -21,7 +21,7 @@ Remember to allow any traffic from Harmonia in your firewall.
 You can test it using [TEST-PLAN.md](./TEST-PLAN.md).
 This is currently also the instruction on how to use Harmonia.
 
-Developer documentation can be generated and viewed using `cargo`:
+Developer documentation can be viewed [here](https://robertbendun.github.io/harmonia/harmonia/index.html) or generated locally using `cargo`:
 
 ```console
 cargo doc --open --document-private-items
