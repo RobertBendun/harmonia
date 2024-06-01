@@ -16,6 +16,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      - name: Required Linux dependencies
+        if: runner.os == 'Linux'
+        run: "sudo apt install -y libasound2-dev"
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Configure cache
