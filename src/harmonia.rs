@@ -24,6 +24,7 @@ use axum::{
     Router, TypedHeader,
 };
 use clap::Parser;
+use maud::html;
 use midir::{MidiOutput, MidiOutputPort};
 use rusty_link::AblLink;
 use std::{
@@ -379,7 +380,11 @@ async fn link_status_websocket_loop(
     app_state: State<Arc<AppState>>,
 ) {
     loop {
-        let markup = handlers::runtime_status(app_state.clone()).await;
+        let markup = html! {
+            (handlers::runtime_status(app_state.clone()).await);
+            (handlers::playing_status(app_state.clone()).await);
+        };
+
         if let Err(err) = socket.send(Message::Text(markup.into_string())).await {
             error!("websocket send to {addr} failed: {err}");
             break;

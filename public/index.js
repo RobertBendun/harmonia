@@ -27,7 +27,8 @@ function socket_event(type, socket) {
 }
 
 async function init_websocket() {
-	const link_status_div = document.getElementById("status");
+	const status = document.getElementById("status"); // TODO: Status -> synchronization status
+	const playing = document.getElementById("playing-status");
 
 	for (;;) {
 		let socket = null;
@@ -42,7 +43,10 @@ async function init_websocket() {
 			});
 
 			socket.addEventListener("message", (event) => {
-				link_status_div.innerHTML = event.data;
+				let incoming = document.createElement('div');
+				incoming.innerHTML = event.data;
+				status.replaceChildren(incoming.childNodes[0]);
+				playing.replaceChildren(incoming.childNodes[0]);
 			});
 		} catch (err) {
 			console.error(err);

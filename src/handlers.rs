@@ -84,9 +84,7 @@ pub async fn index(app_state: State<Arc<AppState>>) -> Markup {
                 }
 
                 aside {
-                    table id="status" {
-                        (runtime_status(app_state.clone()).await);
-                    }
+                    (runtime_status(app_state.clone()).await);
                     div {
                         label for="midi" { "New MIDI" }
                         input
@@ -155,22 +153,65 @@ pub async fn runtime_status(app_state: State<Arc<AppState>>) -> Markup {
     let peers = app_state.link.num_peers();
 
     html! {
-        tr {
-            th id="app-health" colspan="2" {
-                @if active { "Synchronized" }
-                @else { "ERROR" }
+        table id="status" {
+            tr {
+                th id="app-health" colspan="2" {
+                    @if active { "Synchronized" }
+                    @else { "ERROR" }
+                }
             }
+            tr { th { "Peers" } td { (peers) } }
+            tr { th { "Beat" } td { (format!("{beat:.1}")) } }
+            tr { th { "BPM" } td { (session_state.tempo()) } }
         }
-        tr { th { "Peers" } td { (peers) } }
-        tr { th { "Beat" } td { (format!("{beat:.1}")) } }
-        tr { th { "BPM" } td { (session_state.tempo()) } }
     }
 }
 
 /// Renders playing state or nothing (if nothing is played)
-async fn playing_status(app_state: State<Arc<AppState>>) -> Markup {
-    let _ = app_state;
-    html! {}
+pub async fn playing_status(app_state: State<Arc<AppState>>) -> Markup {
+    let playing = app_state.groups.as_ref().unwrap().is_playing();
+
+    let currently_playing_uuid = app_state.currently_playing_uuid.read().unwrap();
+    let current_playing_progress = app_state.current_playing_progress.read().unwrap();
+
+    let is_infinite = current_playing_progress.0 == current_playing_progress.1 &&
+        current_playing_progress.0 == 0;
+
+    html! {
+        div id="playing-status" {
+            @if playing {
+                @if is_infinite {
+                    div class="progress infinite" {
+                        div style="height: 100%; background-color: gray" {}
+                        (maud::PreEscaped("&#x221E;"));
+                    }
+                } else {
+                    div class="progress" {
+                        div style="height: 100%; background-color: gray" {}
+                        (format!("{}%", current_playing_progress.0 * 100 / current_playing_progress.1));
+                    }
+                }
+                div style="grid-are: info" {
+                    ({
+                        // TODO: Unnesesary clone
+                        if let Some(uuid) = currently_playing_uuid.clone() {
+                            let blocks = app_state.blocks.read().unwrap();
+                            if let Some(block) = blocks.get(&uuid) {
+                                match &block.content {
+                                    block::Content::Midi(m) => m.file_name.clone(),
+                                    block::Content::SharedMemory { path } => path.to_string(),
+                                }
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        }
+                    })
+                }
+            }
+        }
+    }
 }
 
 /// Renders information about the system
