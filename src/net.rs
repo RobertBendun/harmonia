@@ -7,7 +7,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 
-
 /// Collection of references to sockets on all IPv4 interfaces
 pub struct Sockets {
     pub sockets: Vec<Arc<tokio::net::UdpSocket>>,
@@ -115,7 +114,6 @@ fn get_current_ipv4_addresses() -> Vec<Ipv4Addr> {
         })
         .collect()
 }
-
 
 /// Get multicast address for linky_groups communication
 fn multicast() -> std::net::SocketAddr {

@@ -48,7 +48,6 @@ mod block;
 mod handlers;
 mod public;
 
-
 /// Filename under which Harmonia stores blocks, user info and other metadata
 const STATE_PATH: &str = "harmonia_state.bson";
 
@@ -102,7 +101,6 @@ pub struct AppState {
 
     /// [audio_engine] shared state that allows to send commands from UI to engine (and back)
     pub audio_engine: RwLock<AudioEngine>,
-
 
     // TODO: Be better
     /// Identifier of currently playing block, used in UI
@@ -184,7 +182,7 @@ impl AppState {
 #[derive(Parser, Debug)]
 #[command(version = format!("{}", Version::default()))]
 /// Harmonia is a synchronized MIDI and music player for laptop orchestra
-struct Args {
+struct Cli {
     /// Don't start link connection
     #[arg(long)]
     disable_link: bool,
@@ -200,14 +198,25 @@ struct Args {
     /// Port for UI
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
+
+
+    /// Disable colors. Overwrites NO_COLOR environment variable
+    #[arg(long = "no-color", default_value_t = false)]
+    disable_colors: bool,
 }
 
 /// Initialize Harmonia logging system
 ///
 /// Harmonia logs all the events inside log files, each file timestamped by day.
-fn setup_logging_system() -> tracing_appender::non_blocking::WorkerGuard {
+fn setup_logging_system(cli: &Cli) -> tracing_appender::non_blocking::WorkerGuard {
     let log_file_appender = tracing_appender::rolling::daily(log_path(), "logs");
     let (log_file_appender, guard) = tracing_appender::non_blocking(log_file_appender);
+
+    // https://no-color.org/
+    let disable_colors = cli.disable_colors
+        || std::env::var("NO_COLOR")
+            .map(|x| !x.is_empty())
+            .unwrap_or(false);
 
     tracing_subscriber::registry()
         .with(
@@ -216,11 +225,13 @@ fn setup_logging_system() -> tracing_appender::non_blocking::WorkerGuard {
             }),
         )
         .with(
-            tracing_subscriber::fmt::layer().and_then(
-                tracing_subscriber::fmt::layer()
-                    .with_ansi(false)
-                    .with_writer(log_file_appender),
-            ),
+            tracing_subscriber::fmt::layer()
+                .with_ansi(!disable_colors)
+                .and_then(
+                    tracing_subscriber::fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(log_file_appender),
+                ),
         )
         .init();
     guard
@@ -236,12 +247,12 @@ fn setup_logging_system() -> tracing_appender::non_blocking::WorkerGuard {
 /// [logs]: setup_logging_system()
 #[tokio::main]
 async fn main() -> ExitCode {
-    let args = Args::parse();
-    let _guard = setup_logging_system();
+    let cli = Cli::parse();
+    let _guard = setup_logging_system(&cli);
 
     info!("starting up version {}", Version::default());
 
-    let app_state = Arc::new(AppState::new(args.port));
+    let app_state = Arc::new(AppState::new(cli.port));
     if let Err(err) = app_state.recollect_previous_blocks() {
         warn!("trying to recollect previous sources: {err:#}")
     } else {
@@ -252,10 +263,10 @@ async fn main() -> ExitCode {
     }
 
     app_state.audio_engine.write().unwrap().state = Arc::downgrade(&app_state);
-    app_state.link.enable(!args.disable_link);
+    app_state.link.enable(!cli.disable_link);
     info!(
         "link {}",
-        if args.disable_link {
+        if cli.disable_link {
             "not active"
         } else {
             "active"
@@ -295,9 +306,9 @@ async fn main() -> ExitCode {
         )
         .with_state(app_state.clone());
 
-    let ip: IpAddr = args.ip.parse().unwrap();
+    let ip: IpAddr = cli.ip.parse().unwrap();
 
-    let addr = SocketAddr::from((ip, args.port));
+    let addr = SocketAddr::from((ip, cli.port));
 
     let Ok(builder) = axum::Server::try_bind(&addr) else {
         error!("Address already in use at http://{addr}");
@@ -338,7 +349,7 @@ async fn main() -> ExitCode {
             }
         });
 
-    if args.open {
+    if cli.open {
         info!("opening UI in default browser");
         open::that_detached(format!("http://{display_address}")).unwrap();
     }

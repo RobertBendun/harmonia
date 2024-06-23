@@ -8,7 +8,6 @@
 
 use axum::http::{header, StatusCode};
 
-
 /// All files in `public` directory should be baked into this struct
 #[derive(rust_embed::RustEmbed)]
 #[folder = "public"]
@@ -30,7 +29,6 @@ impl axum::response::IntoResponse for File {
         }
     }
 }
-
 
 /// Convenience macro to simplify definition of routes that only return static response
 ///

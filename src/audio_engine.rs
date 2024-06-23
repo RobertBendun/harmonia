@@ -65,7 +65,6 @@ enum Request {
     Play(RequestPlay),
 }
 
-
 /// Metadata needed to handle play request in [audio_engine_main]
 struct RequestPlay {
     uuid: String,

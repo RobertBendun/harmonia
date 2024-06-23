@@ -174,8 +174,8 @@ pub async fn playing_status(app_state: State<Arc<AppState>>) -> Markup {
     let currently_playing_uuid = app_state.currently_playing_uuid.read().unwrap();
     let current_playing_progress = app_state.current_playing_progress.read().unwrap();
 
-    let is_infinite = current_playing_progress.0 == current_playing_progress.1 &&
-        current_playing_progress.0 == 0;
+    let is_infinite =
+        current_playing_progress.0 == current_playing_progress.1 && current_playing_progress.0 == 0;
 
     html! {
         div id="playing-status" {
