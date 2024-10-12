@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Enable ANSI processing for Windows cmd.exe
+
 ## [0.2.3] - 2024-08-07
 
 ### Changed

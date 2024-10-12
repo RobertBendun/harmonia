@@ -199,7 +199,6 @@ struct Cli {
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
 
-
     /// Disable colors. Overwrites NO_COLOR environment variable
     #[arg(long = "no-color", default_value_t = false)]
     disable_colors: bool,
@@ -237,6 +236,38 @@ fn setup_logging_system(cli: &Cli) -> tracing_appender::non_blocking::WorkerGuar
     guard
 }
 
+#[cfg(target_os = "linux")]
+fn os_specific_initialization() {
+    // TODO: Check for capabilities and drop them if any other then net initialization
+}
+
+#[cfg(target_os = "macos")]
+fn os_specific_initialization() {}
+
+#[cfg(target_os = "windows")]
+fn os_specific_initialization() {
+    use winapi::{
+        shared::minwindef::{DWORD, TRUE},
+        um::consoleapi::{GetConsoleMode, SetConsoleMode},
+        um::handleapi::INVALID_HANDLE_VALUE,
+        um::processenv::GetStdHandle,
+        um::winbase::STD_OUTPUT_HANDLE,
+        um::wincon::ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+    };
+    unsafe {
+        let handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        if handle == INVALID_HANDLE_VALUE {
+            return;
+        }
+        let mut mode: DWORD = 0;
+        if GetConsoleMode(handle, &mut mode as *mut DWORD) != TRUE {
+            return;
+        }
+        mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        SetConsoleMode(handle, mode);
+    }
+}
+
 /// Initialize Harmonia application
 ///
 /// Setup all synchronization mechanisms, HTTP server, recollect stored [AppState] from [cache],
@@ -247,6 +278,8 @@ fn setup_logging_system(cli: &Cli) -> tracing_appender::non_blocking::WorkerGuar
 /// [logs]: setup_logging_system()
 #[tokio::main]
 async fn main() -> ExitCode {
+    os_specific_initialization();
+
     let cli = Cli::parse();
     let _guard = setup_logging_system(&cli);
 
