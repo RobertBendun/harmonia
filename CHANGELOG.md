@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Enable ANSI processing for Windows cmd.exe
+- Report multicast interfaces binds
+
+### Changed
+
+- Allow reusing port number for `linky_groups` multicast connections (`SO_REUSEPORT`)
 
 ## [0.2.3] - 2024-08-07
 
