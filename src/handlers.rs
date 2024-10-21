@@ -280,7 +280,10 @@ pub async fn midi_ports(State(app_state): State<Arc<AppState>>) -> Markup {
         .filter_map(|port| Result::ok(out.port_name(port)));
 
     html! {
-        ol {
+        ol start="0" {
+            li {
+                "Builtin Harmonia MIDI Virtual Port"
+            }
             @for port_name in ports {
                 li { (port_name) }
             }
@@ -461,7 +464,7 @@ pub async fn set_keybind(
 fn port_cell(uuid: &str, associated_port: usize) -> Markup {
     html! {
         input
-            type="number" value=(format!("{}", associated_port + 1))
+            type="number" value=(format!("{}", associated_port))
             name="port"
             hx-target="this"
             hx-swap="outerHTML"
@@ -494,7 +497,7 @@ pub async fn set_port_for_midi(
         return Err(StatusCode::BAD_REQUEST);
     };
 
-    let min = 1_usize;
+    let min = 0_usize;
     let max = app_state.connection.read().unwrap().ports.len();
     if port < min || port > max {
         error!("port number should be between {min} and {max}");
@@ -502,7 +505,7 @@ pub async fn set_port_for_midi(
     }
 
     info!("setting port {port} for {uuid}");
-    midi.associated_port = port - 1;
+    midi.associated_port = port;
     Ok(port_cell(&uuid, midi.associated_port))
 }
 
