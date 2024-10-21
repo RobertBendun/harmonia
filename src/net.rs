@@ -17,7 +17,12 @@ impl Sockets {
     ///
     /// Why bind to all interfaces? From testing binding to 0.0.0.0 will make OS bind to the
     /// gateway interface. For this reason connection from for example host to vm will not work
-    pub fn bind() -> Self {
+    pub fn bind(enabled: bool) -> Self {
+        if !enabled {
+            return Self {
+                sockets: Default::default(),
+            }
+        }
         let sockets: Vec<_> = get_current_ipv4_addresses()
             .into_iter()
             .filter_map(|addr| match open_multicast(addr) {

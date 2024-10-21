@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Allow reusing port number for `linky_groups` multicast connections (`SO_REUSEPORT`)
 
+### Fixed
+
+- `linky_groups` are no longer active when `--disable-link` parameter is passed
+
 ## [0.2.3] - 2024-08-07
 
 ### Changed

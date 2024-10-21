@@ -259,7 +259,7 @@ async fn negotatior(
 
 /// Create, initialize and start listening for group synchronization mechanism
 pub fn listen(link: std::sync::Arc<rusty_link::AblLink>) -> Groups {
-    let connection = Arc::new(net::Sockets::bind());
+    let connection = Arc::new(net::Sockets::bind(link.is_enabled()));
     let (cancel, wait_for_cancel) = tokio::sync::mpsc::channel(1);
     let (send_action, state) = tokio::sync::mpsc::channel(4);
     let is_playing = Arc::new(atomic::AtomicBool::new(false));

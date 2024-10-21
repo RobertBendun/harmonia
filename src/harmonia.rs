@@ -142,8 +142,10 @@ impl AppState {
     /// Crate new [AppState] (once per Harmonia instance)
     ///
     /// Creates Ableton Link session and [linky_groups] session
-    fn new(port: u16) -> Self {
+    fn new(cli: &Cli) -> Self {
         let link = Arc::new(AblLink::new(120.));
+        link.enable(!cli.disable_link);
+
         Self {
             blocks: Default::default(),
             connection: Default::default(),
@@ -151,7 +153,7 @@ impl AppState {
             audio_engine: Default::default(),
             currently_playing_uuid: Default::default(),
             current_playing_progress: Default::default(),
-            port,
+            port: cli.port,
             groups: Some(linky_groups::listen(link)),
         }
     }
@@ -285,7 +287,7 @@ async fn main() -> ExitCode {
 
     info!("starting up version {}", Version::default());
 
-    let app_state = Arc::new(AppState::new(cli.port));
+    let app_state = Arc::new(AppState::new(&cli));
     if let Err(err) = app_state.recollect_previous_blocks() {
         warn!("trying to recollect previous sources: {err:#}")
     } else {
@@ -296,7 +298,6 @@ async fn main() -> ExitCode {
     }
 
     app_state.audio_engine.write().unwrap().state = Arc::downgrade(&app_state);
-    app_state.link.enable(!cli.disable_link);
     info!(
         "link {}",
         if cli.disable_link {
