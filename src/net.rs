@@ -135,6 +135,7 @@ fn open_multicast(interface: Ipv4Addr) -> std::io::Result<tokio::net::UdpSocket>
     socket.set_multicast_if_v4(&interface)?;
     socket.set_nonblocking(true)?;
     socket.set_reuse_address(true)?;
+    socket.set_broadcast(!interface.is_loopback())?;
     socket.set_read_timeout(Some(std::time::Duration::from_secs_f64(0.1)))?;
     socket.set_multicast_loop_v4(interface.is_loopback())?;
 
@@ -142,7 +143,8 @@ fn open_multicast(interface: Ipv4Addr) -> std::io::Result<tokio::net::UdpSocket>
         unreachable!();
     };
     socket.join_multicast_v4(&address, &interface)?;
-    socket.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, multicast.port()).into())?;
+    socket.bind(&SocketAddrV4::new(address, multicast.port()).into())?;
+    tracing::info!("Bound interface {interface} to multicast group {multicast}");
 
     Ok(tokio::net::UdpSocket::from_std(socket.into()).unwrap())
 }
