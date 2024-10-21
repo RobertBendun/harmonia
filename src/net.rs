@@ -135,6 +135,7 @@ fn open_multicast(interface: Ipv4Addr) -> std::io::Result<tokio::net::UdpSocket>
     socket.set_multicast_if_v4(&interface)?;
     socket.set_nonblocking(true)?;
     socket.set_reuse_address(true)?;
+    #[cfg(unix)]
     socket.set_reuse_port(true)?;
     socket.set_read_timeout(Some(std::time::Duration::from_secs_f64(0.1)))?;
     socket.set_multicast_loop_v4(interface.is_loopback())?;
