@@ -38,7 +38,7 @@ pub enum Content {
     /// Play by sending current time via shared memory
     SharedMemory {
         /// Path pointing to shared memory
-        path: String
+        path: String,
     },
 }
 

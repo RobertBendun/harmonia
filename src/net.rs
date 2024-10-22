@@ -22,7 +22,7 @@ impl Sockets {
         if !enabled {
             return Self {
                 sockets: Default::default(),
-            }
+            };
         }
         let sockets: Vec<_> = get_current_ipv4_addresses()
             .into_iter()

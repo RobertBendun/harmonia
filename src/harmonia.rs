@@ -25,7 +25,6 @@ use axum::{
 };
 use clap::Parser;
 use maud::html;
-use midir::{os::unix::VirtualOutput, MidiOutput, MidiOutputConnection, MidiOutputPort};
 use rusty_link::AblLink;
 use std::{
     collections::HashMap,
@@ -53,36 +52,40 @@ const STATE_PATH: &str = "harmonia_state.bson";
 
 /// All MIDI output connections that user may use
 pub struct MidiConnection {
-    pub conn: Arc<Mutex<MidiOutput>>,
-
-    #[cfg(unix)]
-    pub virtual_port: Arc<Mutex<MidiOutputConnection>>,
+    /// Connection to the MIDI Client
+    pub conn: Arc<Mutex<midir::MidiOutput>>,
 
     /// Currently known [MidiOutputPort]s
-    pub ports: Vec<MidiOutputPort>,
+    pub ports: Vec<midir::MidiOutputPort>,
+
+    /// Virtual port created by default on unix platforms
+    ///
+    /// On Linux it isn't necessary needed since it has default MIDI output port from operating
+    /// system. On macOS it is required since by default there are no MIDI outputs to use.
+    #[cfg(unix)]
+    pub virtual_port: Arc<Mutex<midir::MidiOutputConnection>>,
 }
 
 impl Default for MidiConnection {
     fn default() -> Self {
-        let conn = Arc::new(Mutex::new(
-            MidiOutput::new("Harmonia").expect("creating midi output connection"),
-        ));
+        let conn = midir::MidiOutput::new("Harmonia").expect("creating midi output connection");
+        let ports = conn.ports();
 
-        let (virtual_port, ports) = {
-            let conn = conn.lock().unwrap();
-            (
-                Arc::new(Mutex::new(
-                    MidiOutput::new("HarmoniaVirt").expect("creating midi output connection")
-                        .create_virtual("Harmonia")
-                        .expect("creating virtual midi port: {}"),
-                )),
-                conn.ports(),
-            )
+        #[cfg(unix)]
+        let virtual_port = {
+            use midir::os::unix::VirtualOutput;
+            Arc::new(Mutex::new(
+                midir::MidiOutput::new("HarmoniaVirt")
+                    .expect("creating midi output connection")
+                    .create_virtual("Harmonia")
+                    .expect("creating virtual midi port: {}"),
+            ))
         };
 
         Self {
-            conn,
+            conn: Arc::new(Mutex::new(conn)),
             ports,
+            #[cfg(unix)]
             virtual_port,
         }
     }

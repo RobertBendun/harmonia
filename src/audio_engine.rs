@@ -243,7 +243,10 @@ async fn audio_engine_main_midi(
             _ => unimplemented!("Timecode timing format is not supported"),
         };
 
+        #[cfg(unix)]
         let conn = app_state.connection.read().unwrap();
+
+        #[cfg(unix)]
         let mut virtual_output = { conn.virtual_port.lock().unwrap() };
 
         #[allow(unused_assignments)]
@@ -252,6 +255,10 @@ async fn audio_engine_main_midi(
         {
             let output: &mut MidiOutputConnection = {
                 if midi_source.associated_port == 0 {
+                    #[cfg(windows)]
+                    unreachable!();
+
+                    #[cfg(unix)]
                     &mut virtual_output
                 } else {
                     let out = MidiOutput::new("harmonia")?;

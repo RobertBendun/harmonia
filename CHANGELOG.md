@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enable ANSI processing for Windows cmd.exe
 - Report multicast interfaces binds
 - Enforce documentation in source code
+- Enforce minimum MIDI port in UI
 
 ### Changed
 
