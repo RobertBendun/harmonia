@@ -280,7 +280,10 @@ pub async fn midi_ports(State(app_state): State<Arc<AppState>>) -> Markup {
         .filter_map(|port| Result::ok(out.port_name(port)));
 
     html! {
-        ol {
+        ol start="0" {
+            li {
+                "Builtin Harmonia MIDI Virtual Port"
+            }
             @for port_name in ports {
                 li { (port_name) }
             }
@@ -457,12 +460,14 @@ pub async fn set_keybind(
 }
 
 // TODO: Should be select
+// TODO: max should be dynamic
 /// Renders port input for MIDI port
 fn port_cell(uuid: &str, associated_port: usize) -> Markup {
     html! {
         input
-            type="number" value=(format!("{}", associated_port + 1))
+            type="number" value=(format!("{}", associated_port))
             name="port"
+            min=(MIN_PORT_NUMBER)
             hx-target="this"
             hx-swap="outerHTML"
             hx-post=(format!("/blocks/midi/set-port/{uuid}"));
@@ -475,6 +480,12 @@ pub struct SetPort {
     /// MIDI port to set for Midi block
     pub port: usize,
 }
+
+/// Minimum MIDI port number
+///
+/// On windows it is 1 since we don't have virtual ports.
+/// On unix'es it's 0 since we have virtual ports.
+const MIN_PORT_NUMBER: usize = if cfg!(unix) { 0 } else { 1 };
 
 /// Set port for MIDI block
 pub async fn set_port_for_midi(
@@ -494,15 +505,16 @@ pub async fn set_port_for_midi(
         return Err(StatusCode::BAD_REQUEST);
     };
 
-    let min = 1_usize;
     let max = app_state.connection.read().unwrap().ports.len();
-    if port < min || port > max {
-        error!("port number should be between {min} and {max}");
+
+    #[allow(clippy::absurd_extreme_comparisons)]
+    if port < MIN_PORT_NUMBER || port > max {
+        error!("port number should be between {MIN_PORT_NUMBER} and {max}");
         return Ok(port_cell(&uuid, midi.associated_port));
     }
 
     info!("setting port {port} for {uuid}");
-    midi.associated_port = port - 1;
+    midi.associated_port = port;
     Ok(port_cell(&uuid, midi.associated_port))
 }
 

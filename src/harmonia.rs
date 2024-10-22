@@ -25,7 +25,6 @@ use axum::{
 };
 use clap::Parser;
 use maud::html;
-use midir::{MidiOutput, MidiOutputPort};
 use rusty_link::AblLink;
 use std::{
     collections::HashMap,
@@ -33,7 +32,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     process::ExitCode,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
@@ -53,27 +52,49 @@ const STATE_PATH: &str = "harmonia_state.bson";
 
 /// All MIDI output connections that user may use
 pub struct MidiConnection {
+    /// Connection to the MIDI Client
+    pub conn: Arc<Mutex<midir::MidiOutput>>,
+
     /// Currently known [MidiOutputPort]s
-    pub ports: Vec<MidiOutputPort>,
+    pub ports: Vec<midir::MidiOutputPort>,
+
+    /// Virtual port created by default on unix platforms
+    ///
+    /// On Linux it isn't necessary needed since it has default MIDI output port from operating
+    /// system. On macOS it is required since by default there are no MIDI outputs to use.
+    #[cfg(unix)]
+    pub virtual_port: Arc<Mutex<midir::MidiOutputConnection>>,
 }
 
 impl Default for MidiConnection {
     fn default() -> Self {
-        // TODO: Is it valid to create a new MidiOutput per use? Maybe we should create only one
-        // MidiOutput port per application.
-        let out = MidiOutput::new("harmonia").unwrap();
+        let conn = midir::MidiOutput::new("Harmonia").expect("creating midi output connection");
+        let ports = conn.ports();
 
-        Self { ports: out.ports() }
+        #[cfg(unix)]
+        let virtual_port = {
+            use midir::os::unix::VirtualOutput;
+            Arc::new(Mutex::new(
+                midir::MidiOutput::new("HarmoniaVirt")
+                    .expect("creating midi output connection")
+                    .create_virtual("Harmonia")
+                    .expect("creating virtual midi port: {}"),
+            ))
+        };
+
+        Self {
+            conn: Arc::new(Mutex::new(conn)),
+            ports,
+            #[cfg(unix)]
+            virtual_port,
+        }
     }
 }
 
 impl MidiConnection {
     /// Update list of currently known [MidiOutputPort]s
     pub fn refresh(&mut self) {
-        // TODO: Is it valid to create a new MidiOutput per use? Maybe we should create only one
-        // MidiOutput port per application.
-        let out = MidiOutput::new("harmonia").unwrap();
-        self.ports = out.ports();
+        self.ports = self.conn.lock().unwrap().ports();
     }
 }
 

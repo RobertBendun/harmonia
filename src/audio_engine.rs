@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 
-use midir::MidiOutput;
+use midir::{MidiOutput, MidiOutputConnection};
 use midly::live::LiveEvent;
 use rusty_link::SessionState;
 use tracing::{info, warn};
@@ -88,13 +88,15 @@ impl std::fmt::Debug for RequestPlay {
 async fn audio_engine_main(
     request_play: RequestPlay,
     interrupts: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let RequestPlay { uuid, app_state } = request_play;
 
     let block = {
         let blocks = app_state.blocks.read().unwrap();
         let Some(block) = blocks.get(&uuid) else {
-            return Err(format!("block#{uuid} not found. Try reloading page"));
+            return Err(anyhow::Error::msg(format!(
+                "block#{uuid} not found. Try reloading page"
+            )));
         };
         block.clone()
     };
@@ -105,7 +107,9 @@ async fn audio_engine_main(
         }
 
         block::Content::SharedMemory { path } => {
-            audio_engine_shered_memory_main(uuid, path, block.group, app_state, interrupts).await
+            audio_engine_shered_memory_main(uuid, path, block.group, app_state, interrupts)
+                .await
+                .map_err(anyhow::Error::msg)
         }
     }
 }
@@ -207,21 +211,7 @@ async fn audio_engine_main_midi(
     app_state: Arc<AppState>,
     midi_source: block::MidiSource,
     interrupts: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
-) -> Result<(), String> {
-    let mut output = {
-        let out = MidiOutput::new("harmonia")
-            .map_err(|error| format!("failed to open midi output: {error}"))?;
-        let midi_port = &out.ports()[midi_source.associated_port];
-        info!(
-            "outputing to output port #{} named: {}",
-            midi_source.associated_port,
-            out.port_name(midi_port).unwrap(),
-        );
-
-        out.connect(midi_port, /* TODO: Better name */ "harmonia-play")
-            .map_err(|err| format!("failed to connect to midi port: {err}"))?
-    };
-
+) -> anyhow::Result<()> {
     let mut session_state = SessionState::new();
     let quantum = 1.0;
 
@@ -241,7 +231,7 @@ async fn audio_engine_main_midi(
             .unwrap();
     }
 
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> anyhow::Result<tokio::task::JoinHandle<()>> {
         // TODO: Find better solution then checking two times if we have this source
         let midi = midi_source
             .midi()
@@ -250,146 +240,182 @@ async fn audio_engine_main_midi(
 
         let ticks_per_quater_note = match midi.header.timing {
             midly::Timing::Metrical(tpqn) => tpqn.as_int(),
-            _ => {
-                output.close();
-                panic!("Timecode timing format is not supported");
-            }
+            _ => unimplemented!("Timecode timing format is not supported"),
         };
-        *app_state.currently_playing_uuid.write().unwrap() = Some(uuid.clone());
-        *app_state.current_playing_progress.write().unwrap() =
-            (0_usize, midi.tracks.last().unwrap().len());
-        info!("commiting start state");
 
-        let mut time_passed = 0.0;
-        let mut track = midi.tracks.last().unwrap().iter().enumerate();
+        #[cfg(unix)]
+        let conn = app_state.connection.read().unwrap();
 
-        let mut notes_played_per_channel = [[false; 128]; 16];
+        #[cfg(unix)]
+        let mut virtual_output = { conn.virtual_port.lock().unwrap() };
 
-        'audio_loop: loop {
-            let Some((nth, (bytes, event))) = track.next() else {
-                break;
+        #[allow(unused_assignments)]
+        let mut conn_storage = None;
+
+        {
+            let output: &mut MidiOutputConnection = {
+                if midi_source.associated_port == 0 {
+                    #[cfg(windows)]
+                    unreachable!();
+
+                    #[cfg(unix)]
+                    &mut virtual_output
+                } else {
+                    let out = MidiOutput::new("harmonia")?;
+
+                    let midi_port = &out.ports()[midi_source.associated_port - 1];
+                    info!(
+                        "outputing to output port #{} named: {}",
+                        midi_source.associated_port,
+                        out.port_name(midi_port).unwrap(),
+                    );
+
+                    conn_storage = Some(
+                        out.connect(midi_port, /* TODO: Better name */ "harmonia-play")
+                            .map_err(|err| {
+                                anyhow::Error::msg(format!("failed to connect to midi port: {err}"))
+                            })?,
+                    );
+                    conn_storage.as_mut().unwrap()
+                }
             };
 
+            *app_state.currently_playing_uuid.write().unwrap() = Some(uuid.clone());
             *app_state.current_playing_progress.write().unwrap() =
-                (nth, midi.tracks.last().unwrap().len());
+                (0_usize, midi.tracks.last().unwrap().len());
+            info!("commiting start state");
 
-            let (interrupt, interruptable_sleep) = &*interrupts;
-            let interrupted = interrupt.try_lock().map(|x| *x).unwrap_or(false);
-            if interrupted {
-                break;
-            }
+            let mut time_passed = 0.0;
+            let mut track = midi.tracks.last().unwrap().iter().enumerate();
 
-            let time_to_wait = event.delta.as_int() as f64 / ticks_per_quater_note as f64;
-            time_passed += time_to_wait;
+            let mut notes_played_per_channel = [[false; 128]; 16];
 
-            // TODO: Rust makes a note that condvar shouldn't be use in time critical applications?
-            loop {
-                app_state.link.capture_app_session_state(&mut session_state);
-                let current_time =
-                    session_state.beat_at_time(app_state.link.clock_micros(), quantum);
+            'audio_loop: loop {
+                let Some((nth, (bytes, event))) = track.next() else {
+                    break;
+                };
 
-                info!("[passed={time_passed}, current={current_time}] {event:?}");
-                if current_time >= time_passed {
+                *app_state.current_playing_progress.write().unwrap() =
+                    (nth, midi.tracks.last().unwrap().len());
+
+                let (interrupt, interruptable_sleep) = &*interrupts;
+                let interrupted = interrupt.try_lock().map(|x| *x).unwrap_or(false);
+                if interrupted {
                     break;
                 }
 
-                let sleep_time = (time_passed - current_time) / 120.0 * 60.0;
-                let guard = interrupt.lock().unwrap();
-                let (interrupted, sleep_result) = interruptable_sleep
-                    .wait_timeout(guard, Duration::from_secs_f64(sleep_time))
-                    .unwrap();
-                if *interrupted {
-                    break 'audio_loop;
+                let time_to_wait = event.delta.as_int() as f64 / ticks_per_quater_note as f64;
+                time_passed += time_to_wait;
+
+                // TODO: Rust makes a note that condvar shouldn't be use in time critical applications?
+                loop {
+                    app_state.link.capture_app_session_state(&mut session_state);
+                    let current_time =
+                        session_state.beat_at_time(app_state.link.clock_micros(), quantum);
+
+                    info!("[passed={time_passed}, current={current_time}] {event:?}");
+                    if current_time >= time_passed {
+                        break;
+                    }
+
+                    let sleep_time = (time_passed - current_time) / 120.0 * 60.0;
+                    let guard = interrupt.lock().unwrap();
+                    let (interrupted, sleep_result) = interruptable_sleep
+                        .wait_timeout(guard, Duration::from_secs_f64(sleep_time))
+                        .unwrap();
+                    if *interrupted {
+                        break 'audio_loop;
+                    }
+                    if sleep_result.timed_out() {
+                        break;
+                    }
                 }
-                if sleep_result.timed_out() {
-                    break;
+
+                match event.kind {
+                    midly::TrackEventKind::Meta(meta) => match meta {
+                        // http://midi.teragonaudio.com/tech/midifile/ppqn.htm
+                        midly::MetaMessage::Tempo(tempo) => {
+                            let tempo: f32 = 60_000_000.0 / (tempo.as_int() as f32);
+                            info!("changing tempo to {}", tempo)
+                        }
+
+                        // http://midi.teragonaudio.com/tech/midifile/time.htm
+                        midly::MetaMessage::TimeSignature(num, den, _, _) => {
+                            info!(
+                                "time signature is: {num}/{den}",
+                                den = 2_usize.pow(den.into())
+                            )
+                        }
+
+                        // These are obligatory at the end of track so we don't need to handle them
+                        midly::MetaMessage::EndOfTrack => {}
+                        msg => {
+                            warn!("unknown meta message: {msg:?}")
+                        }
+                    },
+                    midly::TrackEventKind::Midi { channel, message } => match message {
+                        // TODO: Remember currenlty played notes so we can unwind this musical stack when
+                        // we turn it off.
+                        midly::MidiMessage::NoteOn { key, vel } => {
+                            notes_played_per_channel[channel.as_int() as usize]
+                                [key.as_int() as usize] = vel != 0;
+                            output.send(bytes).unwrap();
+                        }
+                        midly::MidiMessage::NoteOff { key, .. } => {
+                            notes_played_per_channel[channel.as_int() as usize]
+                                [key.as_int() as usize] = false;
+                            output.send(bytes).unwrap();
+                        }
+                        msg => {
+                            warn!("unknown midi message: {msg:?}")
+                        }
+                    },
+                    midly::TrackEventKind::SysEx(_) => {
+                        // TODO: They should probably be forwarded
+                        warn!("sysex messages are not handled yet");
+                    }
+                    midly::TrackEventKind::Escape(_) => {
+                        // TODO: They should probably be forwarded
+                        warn!("escape messages are not handled yet");
+                    }
                 }
             }
 
-            match event.kind {
-                midly::TrackEventKind::Meta(meta) => match meta {
-                    // http://midi.teragonaudio.com/tech/midifile/ppqn.htm
-                    midly::MetaMessage::Tempo(tempo) => {
-                        let tempo: f32 = 60_000_000.0 / (tempo.as_int() as f32);
-                        info!("changing tempo to {}", tempo)
-                    }
+            let mut buf = Vec::new();
+            for (channel, notes) in notes_played_per_channel.iter().enumerate() {
+                for (key, played) in notes.iter().enumerate() {
+                    if *played {
+                        let event = LiveEvent::Midi {
+                            channel: (channel as u8).into(),
+                            message: midly::MidiMessage::NoteOff {
+                                key: (key as u8).into(),
+                                vel: 0.into(),
+                            },
+                        };
 
-                    // http://midi.teragonaudio.com/tech/midifile/time.htm
-                    midly::MetaMessage::TimeSignature(num, den, _, _) => {
-                        info!(
-                            "time signature is: {num}/{den}",
-                            den = 2_usize.pow(den.into())
-                        )
-                    }
-
-                    // These are obligatory at the end of track so we don't need to handle them
-                    midly::MetaMessage::EndOfTrack => {}
-                    msg => {
-                        warn!("unknown meta message: {msg:?}")
-                    }
-                },
-                midly::TrackEventKind::Midi { channel, message } => match message {
-                    // TODO: Remember currenlty played notes so we can unwind this musical stack when
-                    // we turn it off.
-                    midly::MidiMessage::NoteOn { key, vel } => {
-                        notes_played_per_channel[channel.as_int() as usize]
-                            [key.as_int() as usize] = vel != 0;
-                        output.send(bytes).unwrap();
-                    }
-                    midly::MidiMessage::NoteOff { key, .. } => {
-                        notes_played_per_channel[channel.as_int() as usize]
-                            [key.as_int() as usize] = false;
-                        output.send(bytes).unwrap();
-                    }
-                    msg => {
-                        warn!("unknown midi message: {msg:?}")
-                    }
-                },
-                midly::TrackEventKind::SysEx(_) => {
-                    // TODO: They should probably be forwarded
-                    warn!("sysex messages are not handled yet");
-                }
-                midly::TrackEventKind::Escape(_) => {
-                    // TODO: They should probably be forwarded
-                    warn!("escape messages are not handled yet");
-                }
-            }
-        }
-
-        let task = {
-            let app_state = app_state.clone();
-            tokio::spawn(async move { app_state.groups.as_ref().unwrap().stop().await })
-        };
-
-        let mut buf = Vec::new();
-        for (channel, notes) in notes_played_per_channel.iter().enumerate() {
-            for (key, played) in notes.iter().enumerate() {
-                if *played {
-                    let event = LiveEvent::Midi {
-                        channel: (channel as u8).into(),
-                        message: midly::MidiMessage::NoteOff {
-                            key: (key as u8).into(),
-                            vel: 0.into(),
-                        },
-                    };
-
-                    event.write(&mut buf).expect(
+                        event.write(&mut buf).expect(
                         "this notes were produced from valid MIDI messages so they must serialize",
                     );
-                    if let Err(error) = output.send(&buf) {
-                        tracing::error!("failed to send cleanup note off message: {error}");
+                        if let Err(error) = output.send(&buf) {
+                            tracing::error!("failed to send cleanup note off message: {error}");
+                        }
+                        buf.clear();
                     }
-                    buf.clear();
                 }
             }
         }
 
-        output.close();
+        conn_storage.take().map(|x| x.close());
         *app_state.currently_playing_uuid.write().unwrap() = None;
-        task
+
+        // TODO: Why it needs to be here?
+        Ok({
+            let app_state = app_state.clone();
+            tokio::spawn(async move { app_state.groups.as_ref().unwrap().stop().await })
+        })
     })
     .await
-    .unwrap()
+    .unwrap()?
     .await
     .unwrap();
     Ok(())
