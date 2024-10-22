@@ -104,6 +104,7 @@ pub struct Groups {
 /// All the errors that this crate may produce
 #[derive(Debug)]
 pub enum Error {
+    /// User provided GroupId that is longer [MAX_GROUP_ID_LENGTH]
     GroupIdTooLong,
 }
 
@@ -183,7 +184,9 @@ async fn negotatior(
     let mut current_group = None;
     let mut last_send_time = Instant::now();
 
+    #[allow(clippy::missing_docs_in_private_items)]
     const TIMEOUT_DURATION: Duration = Duration::from_millis(50);
+    #[allow(clippy::missing_docs_in_private_items)]
     const QUANTUM: f64 = 1.0;
 
     loop {

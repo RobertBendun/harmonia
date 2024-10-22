@@ -238,14 +238,19 @@ fn setup_logging_system(cli: &Cli) -> tracing_appender::non_blocking::WorkerGuar
     guard
 }
 
+/// Setup Linux specific env for application
 #[cfg(target_os = "linux")]
 fn os_specific_initialization() {
     // TODO: Check for capabilities and drop them if any other then net initialization
 }
 
+/// Setup macOS specific env for application
 #[cfg(target_os = "macos")]
 fn os_specific_initialization() {}
 
+/// Setup Windows specific env for application
+///
+/// Enables processing ANSI escape codes to properly display colors in cmd.exe
 #[cfg(target_os = "windows")]
 fn os_specific_initialization() {
     use winapi::{

@@ -67,7 +67,10 @@ enum Request {
 
 /// Metadata needed to handle play request in [audio_engine_main]
 struct RequestPlay {
+    /// Unique block identifier
     uuid: String,
+
+    /// Application state from main thread
     app_state: Arc<AppState>,
 }
 

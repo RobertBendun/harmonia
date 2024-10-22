@@ -1,6 +1,8 @@
+//! Prepare environment variables for build
 use std::ffi::OsStr;
 use std::process::Command;
 
+/// Get stdout of command
 fn get_output<S, I>(program: S, args: I) -> Result<String, std::io::Error>
 where
     S: AsRef<OsStr>,

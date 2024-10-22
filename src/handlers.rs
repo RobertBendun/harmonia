@@ -364,6 +364,7 @@ fn group(uuid: &str, group: &str) -> Markup {
 /// Schema for setting group for block request
 #[derive(Deserialize)]
 pub struct SetGroup {
+    /// Group identifier to set
     pub group: String,
 }
 
@@ -426,6 +427,7 @@ fn keybind(uuid: &str, keybind: &str) -> Markup {
 /// Schema for request that sets keybind for given block
 #[derive(Deserialize)]
 pub struct SetKeybind {
+    /// Kebind to set
     pub keybind: String,
 }
 
@@ -470,6 +472,7 @@ fn port_cell(uuid: &str, associated_port: usize) -> Markup {
 /// Schema for port selection for block containing MIDI
 #[derive(Deserialize)]
 pub struct SetPort {
+    /// MIDI port to set for Midi block
     pub port: usize,
 }
 
@@ -569,6 +572,7 @@ pub async fn interrupt(State(app_state): State<Arc<AppState>>) {
 /// Schema for creation of new shared memory block
 #[derive(Deserialize)]
 pub struct AddSharedMemoryBlock {
+    /// Path to shared memory block
     path: String,
 }
 

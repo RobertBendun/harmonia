@@ -35,8 +35,11 @@ pub enum Content {
     /// MIDI file itself with metadata
     Midi(MidiSource),
 
-    /// Path pointing to shared memory
-    SharedMemory { path: String },
+    /// Play by sending current time via shared memory
+    SharedMemory {
+        /// Path pointing to shared memory
+        path: String
+    },
 }
 
 impl Content {
@@ -63,6 +66,7 @@ pub struct MidiSource {
 }
 
 impl MidiSource {
+    /// Return midi contained by midi source
     pub fn midi(&self) -> Result<midly::SmfBytemap<'_>, midly::Error> {
         midly::SmfBytemap::parse(&self.bytes)
     }

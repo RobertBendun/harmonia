@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 /// Collection of references to sockets on all IPv4 interfaces
 pub struct Sockets {
+    /// Sockets bound for each network interface
     pub sockets: Vec<Arc<tokio::net::UdpSocket>>,
 }
 

@@ -1,3 +1,4 @@
+#![allow(clippy::missing_docs_in_private_items)]
 //! Playground to test [linky_groups] using terminal interface.
 //!
 //! It's deprectaed and will be removed in future release.
