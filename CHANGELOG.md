@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Connection to MIDI port 0 on Windows doesn't result in crash anymore
+- When creating new MIDI source use minimal port number by default
+
 ## [0.3.0] - 2024-10-22
 
 ### Added
