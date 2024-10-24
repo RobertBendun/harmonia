@@ -69,11 +69,9 @@ pub async fn index(app_state: State<Arc<AppState>>) -> Markup {
                                 let cache = cache_path();
                                 let c: &std::path::Path = &cache;
 
-                                // TODO: On Windows don't use "~" as HOME since it may not work,
-                                // use environment variable instead
                                 dirs::home_dir()
                                     .and_then(|home| c.strip_prefix(home).ok())
-                                    .map(|p| PathBuf::from("~").join(p))
+                                    .map(|p| PathBuf::from(if cfg!(unix) { "~" } else { "%HOMEPATH%" }).join(p))
                                     .unwrap_or(cache)
                                     .to_str()
                                     .unwrap()
@@ -485,7 +483,7 @@ pub struct SetPort {
 ///
 /// On windows it is 1 since we don't have virtual ports.
 /// On unix'es it's 0 since we have virtual ports.
-const MIN_PORT_NUMBER: usize = if cfg!(unix) { 0 } else { 1 };
+pub const MIN_PORT_NUMBER: usize = if cfg!(unix) { 0 } else { 1 };
 
 /// Set port for MIDI block
 pub async fn set_port_for_midi(
@@ -636,7 +634,7 @@ pub async fn add_new_midi_source_block(
         let midi_source = block::MidiSource {
             bytes: data,
             file_name: file_name.clone(),
-            associated_port: 0,
+            associated_port: MIN_PORT_NUMBER,
         };
 
         let block = block::Block {

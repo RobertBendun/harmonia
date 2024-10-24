@@ -31,6 +31,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::anyhow;
 use midir::{MidiOutput, MidiOutputConnection};
 use midly::live::LiveEvent;
 use rusty_link::SessionState;
@@ -254,7 +255,10 @@ async fn audio_engine_main_midi(
 
         {
             let output: &mut MidiOutputConnection = {
-                if midi_source.associated_port == 0 {
+                let port_number = midi_source
+                    .associated_port
+                    .max(crate::handlers::MIN_PORT_NUMBER);
+                if port_number == 0 {
                     #[cfg(windows)]
                     unreachable!();
 
@@ -262,16 +266,22 @@ async fn audio_engine_main_midi(
                     &mut virtual_output
                 } else {
                     let out = MidiOutput::new("harmonia")?;
-
-                    let midi_port = &out.ports()[midi_source.associated_port - 1];
+                    let ports = out.ports();
+                    let Some(midi_port) = ports.get(port_number - 1) else {
+                        return Err(anyhow!(
+                            "failed to connect to unknown midi port number {} (max {})",
+                            port_number,
+                            ports.len()
+                        ));
+                    };
                     info!(
                         "outputing to output port #{} named: {}",
                         midi_source.associated_port,
-                        out.port_name(midi_port).unwrap(),
+                        out.port_name(&midi_port).unwrap(),
                     );
 
                     conn_storage = Some(
-                        out.connect(midi_port, /* TODO: Better name */ "harmonia-play")
+                        out.connect(&midi_port, /* TODO: Better name */ "harmonia-play")
                             .map_err(|err| {
                                 anyhow::Error::msg(format!("failed to connect to midi port: {err}"))
                             })?,
