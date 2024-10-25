@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2024-10-25
+
+### Removed
+
+- Windows ANSI terminal processing
+
 ## [0.4.0] - 2024-10-25
 
 Additional release since Windows Defender marked previous one as trojan :)

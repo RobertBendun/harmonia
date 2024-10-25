@@ -1,6 +1,6 @@
 [package]
 name = "harmonia"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 build = "src/build.rs"
 default-run = "harmonia"
@@ -61,8 +61,8 @@ mime_guess = "2.0.4"
 tracing-appender = "0.2.3"
 shared_memory = "0.12.4"
 
-[target.'cfg(windows)'.dependencies]
-winapi = { version =  "0.3.8", features = ["winbase", "consoleapi", "processenv", "handleapi", "synchapi", "impl-default"] }
+# [target.'cfg(windows)'.dependencies]
+# winapi = { version =  "0.3.8", features = ["winbase", "consoleapi", "processenv", "handleapi", "synchapi", "impl-default"] }
 
 [dependencies.rusty_link]
 git = "https://github.com/RobertBendun/rusty_link.git"
