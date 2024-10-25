@@ -77,9 +77,17 @@ async function keyup(ev) {
 		return;
 	}
 
+	if (ev.key == ' ') {
+		await fetch('/interrupt', { method: 'POST' });
+		ev.preventDefault();
+		return;
+	}
+
 	const uuid = registered_key_bindings[ev.key];
 	if (uuid) {
 		await fetch(`/blocks/play/${uuid}`, { method: 'POST' });
+		ev.preventDefault();
+		return;
 	}
 }
 
