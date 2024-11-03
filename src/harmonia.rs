@@ -178,12 +178,11 @@ impl AppState {
         let link = Arc::new(AblLink::new(120.));
         link.enable(!cli.disable_link);
 
-        let nick = std::fs::read_to_string(cache_path().join(NICK_PATH))
-            .unwrap_or_else(|_| {
-                let username = whoami::realname();
-                tracing::warn!("Failed to find a nick file, using username {username:?}");
-                username
-            });
+        let nick = std::fs::read_to_string(cache_path().join(NICK_PATH)).unwrap_or_else(|_| {
+            let username = whoami::realname();
+            tracing::warn!("Failed to find a nick file, using username {username:?}");
+            username
+        });
 
         Self {
             blocks: Default::default(),
@@ -475,7 +474,11 @@ async fn link_status_websocket_loop(
     addr: SocketAddr,
     app_state: State<Arc<AppState>>,
 ) {
+    // TODO: Sleep should be based on BPM to keep in sync with clock as good as possible
+    let mut interval = tokio::time::interval(Duration::from_millis(100));
+
     loop {
+        interval.tick().await;
         let markup = html! {
             (handlers::runtime_status(app_state.clone()).await);
             (handlers::playing_status(app_state.clone()).await);
@@ -485,8 +488,6 @@ async fn link_status_websocket_loop(
             error!("websocket send to {addr} failed: {err}");
             break;
         }
-        // TODO: Sleep should be based on BPM to keep in sync with clock as good as possible
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let _ = socket.close().await;
 }

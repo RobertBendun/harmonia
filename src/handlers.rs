@@ -282,8 +282,11 @@ async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
 pub async fn midi_ports(State(app_state): State<Arc<AppState>>) -> Markup {
     let out = MidiOutput::new("harmonia").unwrap();
 
-    let mut midi_conn = app_state.connection.write().unwrap();
-    midi_conn.refresh();
+    if let Ok(mut midi_conn) = app_state.connection.try_write() {
+        midi_conn.refresh();
+    }
+
+    let midi_conn = app_state.connection.read().unwrap();
 
     let ports = midi_conn
         .ports
@@ -686,15 +689,33 @@ pub async fn abort(
     headers
 }
 
+/// Abort application on user's request
+///
+/// Note that application can be stopped only from localhost
+pub async fn abort(
+    addr: ConnectInfo<crate::SocketAddr>,
+    app_state: State<Arc<AppState>>,
+) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+
+    if addr.ip().is_loopback() {
+        app_state.abort.notify_one();
+        headers.insert("HX-Redirect", "/".parse().unwrap());
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    headers
+}
+
+/// Payload to set a nick
 #[derive(Deserialize)]
 pub struct SetNick {
+    /// Name that user prefers
     nick: String,
 }
 
-pub async fn set_nick(
-    app_state: State<Arc<AppState>>,
-    Form(SetNick { nick }): Form<SetNick>,
-) {
+/// Set nick and save it to file
+pub async fn set_nick(app_state: State<Arc<AppState>>, Form(SetNick { nick }): Form<SetNick>) {
     let mut nick_ref = app_state.nick.write().unwrap();
     let nick = nick.trim();
     tracing::info!("setting nick to: {nick:?}");

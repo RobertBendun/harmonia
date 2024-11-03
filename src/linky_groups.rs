@@ -189,12 +189,13 @@ async fn negotatior(
     #[allow(clippy::missing_docs_in_private_items)]
     const QUANTUM: f64 = 1.0;
 
+    let mut timeout = tokio::time::interval(TIMEOUT_DURATION);
+
     loop {
         let request = if current_group.is_some() {
-            let timeout = tokio::time::sleep(TIMEOUT_DURATION);
             tokio::select! {
                 request = state.recv() => request,
-                _ = timeout => None,
+                _ = timeout.tick() => None,
             }
         } else {
             state.recv().await
