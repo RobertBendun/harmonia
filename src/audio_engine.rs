@@ -277,11 +277,11 @@ async fn audio_engine_main_midi(
                     info!(
                         "outputing to output port #{} named: {}",
                         midi_source.associated_port,
-                        out.port_name(&midi_port).unwrap(),
+                        out.port_name(midi_port).unwrap(),
                     );
 
                     conn_storage = Some(
-                        out.connect(&midi_port, /* TODO: Better name */ "harmonia-play")
+                        out.connect(midi_port, /* TODO: Better name */ "harmonia-play")
                             .map_err(|err| {
                                 anyhow::Error::msg(format!("failed to connect to midi port: {err}"))
                             })?,

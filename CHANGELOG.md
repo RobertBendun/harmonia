@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Abort button available only for localhost
+
 ## [0.4.0] - 2024-10-25
 
 Additional release since Windows Defender marked previous one as trojan :)
