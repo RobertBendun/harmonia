@@ -70,12 +70,15 @@ async function init_websocket() {
 const registered_key_bindings = {};
 
 /**
-	* @param {KeyboardEvent} input_element
+	* @param {KeyboardEvent} ev
 	*/
 async function keyup(ev) {
 	if (ev.target.nodeName == "INPUT") {
 		return;
 	}
+
+	if (ev.metaKey || ev.altKey || ev.ctrlKey)
+		return;
 
 	if (ev.key == ' ') {
 		await fetch('/interrupt', { method: 'POST' });

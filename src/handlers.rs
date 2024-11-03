@@ -240,14 +240,19 @@ async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
 
     interfaces.sort_by(|(if1, _), (if2, _)| if1.cmp(if2));
 
-    let hostname = gethostname::gethostname();
-    let hostname = hostname.to_string_lossy();
+    let hostname = whoami::devicename();
+    let nick = app_state.nick.read().unwrap();
 
     html! {
         p {
             "Hostname: "; a href=(format!("http://{hostname}:{port}")) {
                 (hostname)
             }
+        }
+        p {
+            label for="nick" { "Nick: " }
+            input type="text" name="nick" value=(nick) hx-post="/nick";
+
         }
 
         @if let Ok(local_ip) = local_ip_address::local_ip() {
@@ -679,4 +684,24 @@ pub async fn abort(
     }
 
     headers
+}
+
+#[derive(Deserialize)]
+pub struct SetNick {
+    nick: String,
+}
+
+pub async fn set_nick(
+    app_state: State<Arc<AppState>>,
+    Form(SetNick { nick }): Form<SetNick>,
+) {
+    let mut nick_ref = app_state.nick.write().unwrap();
+    let nick = nick.trim();
+    tracing::info!("setting nick to: {nick:?}");
+    *nick_ref = nick.to_string();
+
+    let nick_full_path = cache_path().join(crate::NICK_PATH);
+    if let Err(error) = std::fs::write(&nick_full_path, nick) {
+        tracing::warn!("failed to write nick to {nick_full_path:?}: {error}");
+    }
 }

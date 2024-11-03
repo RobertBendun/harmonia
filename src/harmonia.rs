@@ -50,6 +50,9 @@ mod public;
 /// Filename under which Harmonia stores blocks, user info and other metadata
 const STATE_PATH: &str = "harmonia_state.bson";
 
+/// Filename under which Harmonia stores user's nick
+const NICK_PATH: &str = "harmonia_nick.txt";
+
 /// All MIDI output connections that user may use
 pub struct MidiConnection {
     /// Connection to the MIDI Client
@@ -142,6 +145,9 @@ pub struct AppState {
     ///
     /// Used to stop application from the HTTP handlers
     pub abort: tokio::sync::Notify,
+
+    /// Nick that helps users to identify each others
+    pub nick: RwLock<String>,
 }
 
 /// Path to the cache location, based on OS convention
@@ -172,6 +178,13 @@ impl AppState {
         let link = Arc::new(AblLink::new(120.));
         link.enable(!cli.disable_link);
 
+        let nick = std::fs::read_to_string(cache_path().join(NICK_PATH))
+            .unwrap_or_else(|_| {
+                let username = whoami::realname();
+                tracing::warn!("Failed to find a nick file, using username {username:?}");
+                username
+            });
+
         Self {
             blocks: Default::default(),
             connection: Default::default(),
@@ -182,6 +195,7 @@ impl AppState {
             port: cli.port,
             groups: Some(linky_groups::listen(link)),
             abort: Default::default(),
+            nick: RwLock::new(nick),
         }
     }
 
@@ -359,6 +373,7 @@ async fn main() -> ExitCode {
             "/blocks/midi/set-port/:uuid",
             post(handlers::set_port_for_midi),
         )
+        .route("/nick", post(handlers::set_nick))
         .route("/blocks/set-group/:uuid", post(handlers::set_group))
         .route("/blocks/set-keybind/:uuid", post(handlers::set_keybind))
         .route("/interrupt", post(handlers::interrupt))
