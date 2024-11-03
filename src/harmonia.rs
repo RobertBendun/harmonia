@@ -274,26 +274,26 @@ fn os_specific_initialization() {}
 /// Enables processing ANSI escape codes to properly display colors in cmd.exe
 #[cfg(target_os = "windows")]
 fn os_specific_initialization() {
-    // use winapi::{
-    //     shared::minwindef::{DWORD, TRUE},
-    //     um::consoleapi::{GetConsoleMode, SetConsoleMode},
-    //     um::handleapi::INVALID_HANDLE_VALUE,
-    //     um::processenv::GetStdHandle,
-    //     um::winbase::STD_OUTPUT_HANDLE,
-    //     um::wincon::ENABLE_VIRTUAL_TERMINAL_PROCESSING,
-    // };
-    // unsafe {
-    //     let handle = GetStdHandle(STD_OUTPUT_HANDLE);
-    //     if handle == INVALID_HANDLE_VALUE {
-    //         return;
-    //     }
-    //     let mut mode: DWORD = 0;
-    //     if GetConsoleMode(handle, &mut mode as *mut DWORD) != TRUE {
-    //         return;
-    //     }
-    //     mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-    //     SetConsoleMode(handle, mode);
-    // }
+    use winapi::{
+        shared::minwindef::{DWORD, TRUE},
+        um::consoleapi::{GetConsoleMode, SetConsoleMode},
+        um::handleapi::INVALID_HANDLE_VALUE,
+        um::processenv::GetStdHandle,
+        um::winbase::STD_OUTPUT_HANDLE,
+        um::wincon::ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+    };
+    unsafe {
+        let handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        if handle == INVALID_HANDLE_VALUE {
+            return;
+        }
+        let mut mode: DWORD = 0;
+        if GetConsoleMode(handle, &mut mode as *mut DWORD) != TRUE {
+            return;
+        }
+        mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        SetConsoleMode(handle, mode);
+    }
 }
 
 /// Initialize Harmonia application
