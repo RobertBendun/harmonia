@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2024-11-15
+
 ### Added
 
 - Nicks, saved in seperate file from blocks state
+
+### Fixed
+
+- Blocking refresh due to wrong usage of RWLock's
 
 ## [0.4.2] - 2024-11-15
 
