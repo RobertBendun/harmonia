@@ -50,6 +50,9 @@ mod public;
 /// Filename under which Harmonia stores blocks, user info and other metadata
 const STATE_PATH: &str = "harmonia_state.bson";
 
+/// Filename under which Harmonia stores user's nick
+const NICK_PATH: &str = "harmonia_nick.txt";
+
 /// All MIDI output connections that user may use
 pub struct MidiConnection {
     /// Connection to the MIDI Client
@@ -142,6 +145,9 @@ pub struct AppState {
     ///
     /// Used to stop application from the HTTP handlers
     pub abort: tokio::sync::Notify,
+
+    /// Nick that helps users to identify each others
+    pub nick: tokio::sync::RwLock<String>,
 }
 
 /// Path to the cache location, based on OS convention
@@ -172,6 +178,12 @@ impl AppState {
         let link = Arc::new(AblLink::new(120.));
         link.enable(!cli.disable_link);
 
+        let nick = std::fs::read_to_string(cache_path().join(NICK_PATH)).unwrap_or_else(|_| {
+            let username = whoami::realname();
+            tracing::warn!("Failed to find a nick file, using username {username:?}");
+            username
+        });
+
         Self {
             blocks: Default::default(),
             connection: Default::default(),
@@ -182,6 +194,7 @@ impl AppState {
             port: cli.port,
             groups: Some(linky_groups::listen(link)),
             abort: Default::default(),
+            nick: tokio::sync::RwLock::new(nick),
         }
     }
 
@@ -359,6 +372,8 @@ async fn main() -> ExitCode {
             "/blocks/midi/set-port/:uuid",
             post(handlers::set_port_for_midi),
         )
+        .route("/nick", post(handlers::set_nick))
+        .route("/nick", get(handlers::nick))
         .route("/blocks/set-group/:uuid", post(handlers::set_group))
         .route("/blocks/set-keybind/:uuid", post(handlers::set_keybind))
         .route("/interrupt", post(handlers::interrupt))
@@ -460,7 +475,11 @@ async fn link_status_websocket_loop(
     addr: SocketAddr,
     app_state: State<Arc<AppState>>,
 ) {
+    // TODO: Sleep should be based on BPM to keep in sync with clock as good as possible
+    let mut interval = tokio::time::interval(Duration::from_millis(100));
+
     loop {
+        interval.tick().await;
         let markup = html! {
             (handlers::runtime_status(app_state.clone()).await);
             (handlers::playing_status(app_state.clone()).await);
@@ -470,8 +489,6 @@ async fn link_status_websocket_loop(
             error!("websocket send to {addr} failed: {err}");
             break;
         }
-        // TODO: Sleep should be based on BPM to keep in sync with clock as good as possible
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let _ = socket.close().await;
 }

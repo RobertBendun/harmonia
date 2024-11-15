@@ -240,14 +240,19 @@ async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
 
     interfaces.sort_by(|(if1, _), (if2, _)| if1.cmp(if2));
 
-    let hostname = gethostname::gethostname();
-    let hostname = hostname.to_string_lossy();
+    let hostname = whoami::devicename();
+    let nick = app_state.nick.read().await;
 
     html! {
         p {
             "Hostname: "; a href=(format!("http://{hostname}:{port}")) {
                 (hostname)
             }
+        }
+        p {
+            label for="nick" { "Nick: " }
+            input type="text" name="nick" value=(nick) hx-post="/nick";
+
         }
 
         @if let Ok(local_ip) = local_ip_address::local_ip() {
@@ -277,8 +282,11 @@ async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
 pub async fn midi_ports(State(app_state): State<Arc<AppState>>) -> Markup {
     let out = MidiOutput::new("harmonia").unwrap();
 
-    let mut midi_conn = app_state.connection.write().unwrap();
-    midi_conn.refresh();
+    if let Ok(mut midi_conn) = app_state.connection.try_write() {
+        midi_conn.refresh();
+    }
+
+    let midi_conn = app_state.connection.read().unwrap();
 
     let ports = midi_conn
         .ports
@@ -679,4 +687,28 @@ pub async fn abort(
     }
 
     headers
+}
+
+/// Payload to set a nick
+#[derive(Deserialize)]
+pub struct SetNick {
+    /// Name that user prefers
+    nick: String,
+}
+
+pub async fn nick(app_state: State<Arc<AppState>>) -> String {
+    app_state.nick.read().await.clone()
+}
+
+/// Set nick and save it to file
+pub async fn set_nick(app_state: State<Arc<AppState>>, Form(SetNick { nick }): Form<SetNick>) {
+    let mut nick_ref = app_state.nick.write().await;
+    let nick = nick.trim();
+    tracing::info!("setting nick to: {nick:?}");
+    *nick_ref = nick.to_string();
+
+    let nick_full_path = cache_path().join(crate::NICK_PATH);
+    if let Err(error) = std::fs::write(&nick_full_path, nick) {
+        tracing::warn!("failed to write nick to {nick_full_path:?}: {error}");
+    }
 }
