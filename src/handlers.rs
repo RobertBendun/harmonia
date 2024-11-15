@@ -16,10 +16,10 @@
 use crate::{audio_engine, block, cache_path, AppState, Version};
 use axum::{
     body::{Bytes, Full},
-    extract::{Multipart, Path, State},
+    extract::{ConnectInfo, Multipart, Path, State},
     http::{
         header::{CONTENT_DISPOSITION, CONTENT_TYPE},
-        Response, StatusCode,
+        HeaderMap, Response, StatusCode,
     },
     Form,
 };
@@ -28,11 +28,14 @@ use midir::MidiOutput;
 use rusty_link::SessionState;
 use serde::Deserialize;
 use sha1::{Digest, Sha1};
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 use tracing::{error, info};
 
 /// Main route, "/" handler, renders whole interface as HTML
-pub async fn index(app_state: State<Arc<AppState>>) -> Markup {
+pub async fn index(
+    addr: ConnectInfo<crate::SocketAddr>,
+    app_state: State<Arc<AppState>>,
+) -> Markup {
     html! {
         (DOCTYPE);
         html lang="en" {
@@ -121,6 +124,11 @@ pub async fn index(app_state: State<Arc<AppState>>) -> Markup {
                 details class="system-information" {
                     summary { "System information" }
                     (system_information(app_state.clone()).await);
+                    @if addr.ip().is_loopback() {
+                        button hx-post="/abort" hx-confirm="Are you sure that you want to close Harmonia?"  {
+                            "Abort Harmonia instance"
+                        }
+                    }
                 }
 
                 footer {
@@ -653,4 +661,22 @@ pub async fn add_new_midi_source_block(
     }
 
     blocks(axum::extract::State(app_state)).await
+}
+
+/// Abort application on user's request
+///
+/// Note that application can be stopped only from localhost
+pub async fn abort(
+    addr: ConnectInfo<crate::SocketAddr>,
+    app_state: State<Arc<AppState>>,
+) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+
+    if addr.ip().is_loopback() {
+        app_state.abort.notify_one();
+        headers.insert("HX-Redirect", "/".parse().unwrap());
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    headers
 }

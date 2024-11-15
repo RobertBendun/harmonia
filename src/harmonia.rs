@@ -137,6 +137,11 @@ pub struct AppState {
 
     /// [linky_groups] synchronization mechanism
     pub groups: Option<linky_groups::Groups>,
+
+    /// Inform server that user requested application to stop
+    ///
+    /// Used to stop application from the HTTP handlers
+    pub abort: tokio::sync::Notify,
 }
 
 /// Path to the cache location, based on OS convention
@@ -176,6 +181,7 @@ impl AppState {
             current_playing_progress: Default::default(),
             port: cli.port,
             groups: Some(linky_groups::listen(link)),
+            abort: Default::default(),
         }
     }
 
@@ -356,6 +362,7 @@ async fn main() -> ExitCode {
         .route("/blocks/set-group/:uuid", post(handlers::set_group))
         .route("/blocks/set-keybind/:uuid", post(handlers::set_keybind))
         .route("/interrupt", post(handlers::interrupt))
+        .route("/abort", post(handlers::abort))
         .route("/", get(handlers::index))
         .route("/htmx.min.js", public::static_response!(get, "htmx.min.js"))
         .route("/index.js", public::static_response!(get, "index.js"))
@@ -403,9 +410,12 @@ async fn main() -> ExitCode {
             #[cfg(not(unix))]
             let terminate = std::future::pending::<()>();
 
+            let user_requested_abort = app_state.abort.notified();
+
             tokio::select! {
                 _ = ctrl_c => {},
                 _ = terminate => {},
+                _ = user_requested_abort => {},
             }
         });
 
