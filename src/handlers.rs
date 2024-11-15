@@ -689,24 +689,6 @@ pub async fn abort(
     headers
 }
 
-/// Abort application on user's request
-///
-/// Note that application can be stopped only from localhost
-pub async fn abort(
-    addr: ConnectInfo<crate::SocketAddr>,
-    app_state: State<Arc<AppState>>,
-) -> HeaderMap {
-    let mut headers = HeaderMap::new();
-
-    if addr.ip().is_loopback() {
-        app_state.abort.notify_one();
-        headers.insert("HX-Redirect", "/".parse().unwrap());
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-
-    headers
-}
-
 /// Payload to set a nick
 #[derive(Deserialize)]
 pub struct SetNick {
