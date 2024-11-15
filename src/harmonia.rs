@@ -147,7 +147,7 @@ pub struct AppState {
     pub abort: tokio::sync::Notify,
 
     /// Nick that helps users to identify each others
-    pub nick: RwLock<String>,
+    pub nick: tokio::sync::RwLock<String>,
 }
 
 /// Path to the cache location, based on OS convention
@@ -194,7 +194,7 @@ impl AppState {
             port: cli.port,
             groups: Some(linky_groups::listen(link)),
             abort: Default::default(),
-            nick: RwLock::new(nick),
+            nick: tokio::sync::RwLock::new(nick),
         }
     }
 
@@ -373,6 +373,7 @@ async fn main() -> ExitCode {
             post(handlers::set_port_for_midi),
         )
         .route("/nick", post(handlers::set_nick))
+        .route("/nick", get(handlers::nick))
         .route("/blocks/set-group/:uuid", post(handlers::set_group))
         .route("/blocks/set-keybind/:uuid", post(handlers::set_keybind))
         .route("/interrupt", post(handlers::interrupt))

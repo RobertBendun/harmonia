@@ -241,7 +241,7 @@ async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
     interfaces.sort_by(|(if1, _), (if2, _)| if1.cmp(if2));
 
     let hostname = whoami::devicename();
-    let nick = app_state.nick.read().unwrap();
+    let nick = app_state.nick.read().await;
 
     html! {
         p {
@@ -696,9 +696,13 @@ pub struct SetNick {
     nick: String,
 }
 
+pub async fn nick(app_state: State<Arc<AppState>>) -> String {
+    app_state.nick.read().await.clone()
+}
+
 /// Set nick and save it to file
 pub async fn set_nick(app_state: State<Arc<AppState>>, Form(SetNick { nick }): Form<SetNick>) {
-    let mut nick_ref = app_state.nick.write().unwrap();
+    let mut nick_ref = app_state.nick.write().await;
     let nick = nick.trim();
     tracing::info!("setting nick to: {nick:?}");
     *nick_ref = nick.to_string();
