@@ -111,6 +111,13 @@ function update_key_binding(input_element) {
 }
 
 
+/**
+ * @param {HTMLButtonElement} self
+ */
 function toggle_delete(self) {
-	document.body.classList.toggle('delete-mode-active');
+	if (document.body.classList.toggle('delete-mode-active')) {
+		self.style.background = 'red';
+	} else {
+		self.style.background = 'none';
+	}
 }

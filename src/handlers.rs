@@ -161,12 +161,12 @@ pub async fn runtime_status(app_state: State<Arc<AppState>>) -> Markup {
     html! {
         table id="status" {
             tr {
-                th id="app-health" colspan="2" {
+                th title="" id="app-health" colspan="2" {
                     @if active { "Synchronized" }
                     @else { "ERROR" }
                 }
             }
-            tr { th { "Peers" } td { (peers) } }
+            tr { th title="How many other person you see" { "Peers" } td { (peers) } }
             tr { th { "Beat" } td { (format!("{beat:.1}")) } }
             tr { th { "BPM" } td { (session_state.tempo()) } }
         }
@@ -251,7 +251,7 @@ async fn system_information(app_state: State<Arc<AppState>>) -> Markup {
         }
         p {
             label for="nick" { "Nick: " }
-            input type="text" name="nick" value=(nick) hx-post="/nick";
+            input type="text" name="nick" value=(nick) hx-post="/nick" title="Name that can be used to identify yourself" autocomplete="off";
 
         }
 
@@ -310,6 +310,18 @@ async fn blocks(app_state: State<Arc<AppState>>) -> Markup {
     use crate::block::Content;
 
     let blocks = app_state.blocks.read().unwrap();
+    if blocks.is_empty() {
+        return html! {
+            p style="text-align: center" {
+                "You can add MIDI files by pressing „New MIDI” in the bottom left corner. ";
+                "You can select multiple files.";
+                br;
+                "After selection, they will appear here. Associate each one with output port and group to enable synchronization.";
+            }
+        };
+    }
+
+
     let mut orderered_blocks: Vec<_> = blocks.iter().collect();
 
     orderered_blocks.sort_by(|(_, lhs), (_, rhs)| match (lhs.order, rhs.order) {
@@ -374,7 +386,9 @@ fn group(uuid: &str, group: &str) -> Markup {
             name="group"
             placeholder="Group"
             hx-target="this"
-            hx-post=(format!("/blocks/set-group/{uuid}"));
+            hx-post=(format!("/blocks/set-group/{uuid}"))
+            autocomplete="off"
+            title="Label which identifies with whom synchronize. Computers with same label here will be synchronized.";
     }
 }
 
@@ -437,7 +451,9 @@ fn keybind(uuid: &str, keybind: &str) -> Markup {
             hx-post=(format!("/blocks/set-keybind/{uuid}"))
             hx-swap="none"
             placeholder="Keybind"
-            value=(keybind);
+            value=(keybind)
+            autocomplete="off"
+            title="Associate key that after press will start this block.";
     }
 }
 
@@ -484,7 +500,9 @@ fn port_cell(uuid: &str, associated_port: usize) -> Markup {
             min=(MIN_PORT_NUMBER)
             hx-target="this"
             hx-swap="outerHTML"
-            hx-post=(format!("/blocks/midi/set-port/{uuid}"));
+            hx-post=(format!("/blocks/midi/set-port/{uuid}"))
+            autocomplete="off"
+            title="Port number to send MIDI to. List of ports available below in „MIDI Outputs”";
     }
 }
 
