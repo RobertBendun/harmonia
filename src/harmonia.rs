@@ -36,7 +36,6 @@ use std::{
     time::Duration,
 };
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 mod audio_engine;
@@ -280,9 +279,7 @@ fn setup_logging_system(cli: &Cli) -> tracing_appender::non_blocking::WorkerGuar
 
 /// Setup Linux specific env for application
 #[cfg(target_os = "linux")]
-fn os_specific_initialization() {
-    // TODO: Check for capabilities and drop them if any other then net initialization
-}
+fn os_specific_initialization() {}
 
 /// Setup macOS specific env for application
 #[cfg(target_os = "macos")]
@@ -323,27 +320,27 @@ fn os_specific_initialization() {
 ///
 /// [cache]: cache_path()
 /// [logs]: setup_logging_system()
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> ExitCode {
     os_specific_initialization();
 
     let cli = Cli::parse();
     let _guard = setup_logging_system(&cli);
 
-    info!("starting up version {}", Version::default());
+    tracing::info!("starting up version {}", Version::default());
 
     let app_state = Arc::new(AppState::new(&cli));
     if let Err(err) = app_state.recollect_previous_blocks() {
-        warn!("trying to recollect previous sources: {err:#}")
+        tracing::warn!("trying to recollect previous sources: {err:#}")
     } else {
-        info!(
+        tracing::debug!(
             "recollected {count} blocks",
             count = app_state.blocks.read().unwrap().len()
         )
     }
 
     app_state.audio_engine.write().unwrap().state = Arc::downgrade(&app_state);
-    info!(
+    tracing::debug!(
         "link {}",
         if cli.disable_link {
             "not active"
@@ -393,7 +390,7 @@ async fn main() -> ExitCode {
     let addr = SocketAddr::from((ip, cli.port));
 
     let Ok(builder) = axum::Server::try_bind(&addr) else {
-        error!("Address already in use at http://{addr}");
+        tracing::error!("Address already in use at http://{addr}");
         return ExitCode::FAILURE;
     };
 
@@ -403,7 +400,7 @@ async fn main() -> ExitCode {
         addr
     };
 
-    info!("Listening on http://{display_address}");
+    tracing::info!("Connect to Harmonia, which is available at http://{display_address}");
     let server = builder
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async {
@@ -435,7 +432,7 @@ async fn main() -> ExitCode {
         });
 
     if cli.open {
-        info!("opening UI in default browser");
+        tracing::debug!("opening UI in default browser");
         open::that_detached(format!("http://{display_address}")).unwrap();
     }
 
@@ -459,7 +456,7 @@ async fn link_status_websocket_handler(
     } else {
         "unknown user agent".to_string()
     };
-    info!("websocket connect: addr={addr}, user_agent={user_agent}");
+    tracing::info!("websocket connect: addr={addr}, user_agent={user_agent}");
     ws.on_upgrade(move |socket| link_status_websocket_loop(socket, addr, app_state))
 }
 
@@ -486,7 +483,7 @@ async fn link_status_websocket_loop(
         };
 
         if let Err(err) = socket.send(Message::Text(markup.into_string())).await {
-            error!("websocket send to {addr} failed: {err}");
+            tracing::error!("websocket send to {addr} failed: {err}");
             break;
         }
     }

@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Interface improvements: message on empty blocks list, red background on delete mode button, "title" attributes that describe inputs. Harmonia should be as selve descriptive as possible
+- Enable Tokio multithreading
+
+### Fixed
+
+- Don't log all MIDI messages in the terminal by default (they are still available as DEBUG messages)
+- Better Multipart parsing during MIDI upload
+- Showing playing status even when run without `linky_groups`
 
 ## [0.5.0] - 2024-11-15
 

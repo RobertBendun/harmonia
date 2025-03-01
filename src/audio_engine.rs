@@ -252,11 +252,11 @@ fn midi_worker(
                 info!(
                     "outputing to output port #{} named: {}",
                     midi_source.associated_port,
-                    out.port_name(&midi_port).unwrap(),
+                    out.port_name(midi_port).unwrap(),
                 );
 
                 conn_storage = Some(
-                    out.connect(&midi_port, /* TODO: Better name */ "harmonia-play")
+                    out.connect(midi_port, /* TODO: Better name */ "harmonia-play")
                         .map_err(|err| {
                             anyhow::Error::msg(format!("failed to connect to midi port: {err}"))
                         })?,
@@ -298,7 +298,7 @@ fn midi_worker(
                 let current_time =
                     session_state.beat_at_time(app_state.link.clock_micros(), quantum);
 
-                info!("[passed={time_passed}, current={current_time}] {event:?}");
+                tracing::debug!("[passed={time_passed}, current={current_time}] {event:?}");
                 if current_time >= time_passed {
                     break;
                 }
@@ -504,7 +504,7 @@ impl Default for AudioEngine {
                 let worker_interrupt = interrupt.clone().unwrap();
                 let worker = tokio::spawn(async move {
                     if let Err(err) = audio_engine_main(request, worker_interrupt).await {
-                        crate::error!("{err:#}")
+                        tracing::error!("{err:#}")
                     }
                 });
                 current_worker = Some(worker);
@@ -522,7 +522,7 @@ impl Default for AudioEngine {
 /// Send quit command to the [AudioEngine] worker
 pub async fn quit(app_state: Arc<AppState>) {
     let work_in = {
-        let audio_engine = app_state.audio_engine.write().unwrap();
+        let audio_engine = app_state.audio_engine.read().unwrap();
         audio_engine.work_in.clone()
     };
 
@@ -540,7 +540,7 @@ pub async fn quit(app_state: Arc<AppState>) {
 /// Send interrupt request to [AudioEngine] worker
 pub async fn interrupt(app_state: Arc<AppState>) -> Result<(), String> {
     let work_in = {
-        let audio_engine = app_state.audio_engine.write().unwrap();
+        let audio_engine = app_state.audio_engine.read().unwrap();
         audio_engine.work_in.clone()
     };
 

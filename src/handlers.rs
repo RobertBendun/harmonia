@@ -31,6 +31,9 @@ use sha1::{Digest, Sha1};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tracing::{error, info};
 
+/// Name used by the `<input type="file">` for MIDI upload
+const MIDI_FILE_INPUT_FORM_NAME: &str = "midi";
+
 /// Main route, "/" handler, renders whole interface as HTML
 pub async fn index(
     addr: ConnectInfo<crate::SocketAddr>,
@@ -92,17 +95,13 @@ pub async fn index(
                             style="display: none"
                             type="file"
                             id="midi"
-                            name="midi"
+                            name=(MIDI_FILE_INPUT_FORM_NAME)
                             multiple
                             accept="audio/midi"
                             hx-put="/blocks/midi"
                             hx-target="#blocks"
                             hx-swap="innerHTML"
                             hx-encoding="multipart/form-data";
-                        button {
-                            // TODO: Handle SHM adding
-                            "New SHM"
-                        }
                         button onclick="toggle_delete(this)" {
                             "Delete mode"
                         }
@@ -175,8 +174,6 @@ pub async fn runtime_status(app_state: State<Arc<AppState>>) -> Markup {
 
 /// Renders playing state or nothing (if nothing is played)
 pub async fn playing_status(app_state: State<Arc<AppState>>) -> Markup {
-    let playing = app_state.groups.as_ref().unwrap().is_playing();
-
     let currently_playing_uuid = app_state.currently_playing_uuid.read().unwrap();
     let current_playing_progress = app_state.current_playing_progress.read().unwrap();
 
@@ -185,7 +182,7 @@ pub async fn playing_status(app_state: State<Arc<AppState>>) -> Markup {
 
     html! {
         div id="playing-status" {
-            @if playing {
+            @if currently_playing_uuid.is_some() {
                 @if is_infinite {
                     div class="progress infinite" {
                         div style="height: 100%; background-color: gray" {}
@@ -199,10 +196,9 @@ pub async fn playing_status(app_state: State<Arc<AppState>>) -> Markup {
                 }
                 div style="grid-are: info" {
                     ({
-                        // TODO: Unnesesary clone
-                        if let Some(uuid) = currently_playing_uuid.clone() {
+                        if let Some(uuid) = currently_playing_uuid.as_ref() {
                             let blocks = app_state.blocks.read().unwrap();
-                            if let Some(block) = blocks.get(&uuid) {
+                            if let Some(block) = blocks.get(uuid) {
                                 match &block.content {
                                     block::Content::Midi(m) => m.file_name.clone(),
                                     block::Content::SharedMemory { path } => path.to_string(),
@@ -294,10 +290,13 @@ pub async fn midi_ports(State(app_state): State<Arc<AppState>>) -> Markup {
         .filter_map(|port| Result::ok(out.port_name(port)));
 
     html! {
-        ol start="0" {
-            li {
-                "Builtin Harmonia MIDI Virtual Port"
+        ol start=(if cfg!(unix) { 0 } else { 1 }) {
+            @if cfg!(unix) {
+                li {
+                    "Builtin Harmonia MIDI Virtual Port"
+                }
             }
+
             @for port_name in ports {
                 li { (port_name) }
             }
@@ -320,7 +319,6 @@ async fn blocks(app_state: State<Arc<AppState>>) -> Markup {
             }
         };
     }
-
 
     let mut orderered_blocks: Vec<_> = blocks.iter().collect();
 
@@ -404,7 +402,7 @@ pub async fn set_group(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
     Form(SetGroup {
-        group: group_to_set,
+        group: mut group_to_set,
     }): Form<SetGroup>,
 ) -> Result<Markup, StatusCode> {
     let response = {
@@ -415,17 +413,20 @@ pub async fn set_group(
             return Err(StatusCode::NOT_FOUND);
         };
 
-        // TODO: Unnesesary string allocation
-        midi_source.group = if group_to_set.len() > linky_groups::MAX_GROUP_ID_LENGTH {
+        if group_to_set.len() > linky_groups::MAX_GROUP_ID_LENGTH {
             let mut cut = linky_groups::MAX_GROUP_ID_LENGTH;
             while !group_to_set.is_char_boundary(cut) {
                 cut -= 1;
             }
-            &group_to_set[..cut]
-        } else {
-            &group_to_set[..]
+            tracing::warn!(
+                "provided group {:?} is longer then allowed ({} bytes), truncating to {:?}",
+                &group_to_set,
+                linky_groups::MAX_GROUP_ID_LENGTH,
+                &group_to_set[..cut]
+            );
+            group_to_set.truncate(cut);
         }
-        .to_owned();
+        midi_source.group = group_to_set;
 
         tracing::info!(
             "Switched block#{uuid} to group {group:?}",
@@ -573,7 +574,6 @@ pub async fn download_block_content(
     match &block.content {
         block::Content::SharedMemory { .. } => not_found(),
         block::Content::Midi(midi_source) => {
-            // TODO: Unnesesary clone?
             let mut response = Response::new(Full::from(midi_source.bytes.clone()));
             let headers = &mut response.headers_mut();
             headers.insert(
@@ -656,9 +656,12 @@ pub async fn add_new_midi_source_block(
     mut multipart: Multipart,
 ) -> Markup {
     while let Some(field) = multipart.next_field().await.unwrap() {
-        // TODO: Check that this is the name that we are expecting
-        let _name = field.name().unwrap().to_string();
-        // TODO: Better default file name
+        let name = field.name().unwrap();
+        if name != MIDI_FILE_INPUT_FORM_NAME {
+            tracing::warn!("Found unknown field in multipart request: {}", name);
+            continue;
+        }
+
         let file_name = field.file_name().unwrap_or("<unknown>").to_string();
         let data = field.bytes().await.unwrap().to_vec();
         let mut hasher = Sha1::new();
@@ -667,7 +670,7 @@ pub async fn add_new_midi_source_block(
 
         let midi_source = block::MidiSource {
             bytes: data,
-            file_name: file_name.clone(),
+            file_name,
             associated_port: MIN_PORT_NUMBER,
         };
 
