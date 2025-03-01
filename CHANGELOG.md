@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Interface improvements: message on empty blocks list, red background on delete mode button, "title" attributes that describe inputs. Harmonia should be as selve descriptive as possible
 - Enable Tokio multithreading
 
+### Changed
+
+- Update axum to 0.8.1 (from 0.6.20)
+
 ### Fixed
 
 - Don't log all MIDI messages in the terminal by default (they are still available as DEBUG messages)

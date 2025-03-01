@@ -16,13 +16,14 @@
 use anyhow::Context;
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
+        ws::{Message, Utf8Bytes, WebSocket},
         ConnectInfo, State, WebSocketUpgrade,
     },
     response::IntoResponse,
-    routing::{delete, get, post, put},
-    Router, TypedHeader,
+    routing::{any, delete, get, post, put},
+    Router,
 };
+use axum_extra::TypedHeader;
 use clap::Parser;
 use maud::html;
 use rusty_link::AblLink;
@@ -355,24 +356,24 @@ async fn main() -> ExitCode {
     let app = Router::new()
         .route(
             "/api/link-status-websocket",
-            get(link_status_websocket_handler),
+            any(link_status_websocket_handler),
         )
         .route("/blocks/midi", put(handlers::add_new_midi_source_block))
         .route(
             "/blocks/shared_memory",
             put(handlers::add_new_shered_memory_block),
         )
-        .route("/blocks/:uuid", delete(handlers::remove_block))
-        .route("/blocks/:uuid", get(handlers::download_block_content))
-        .route("/blocks/play/:uuid", post(handlers::play))
+        .route("/blocks/{uuid}", delete(handlers::remove_block))
+        .route("/blocks/{uuid}", get(handlers::download_block_content))
+        .route("/blocks/play/{uuid}", post(handlers::play))
         .route(
-            "/blocks/midi/set-port/:uuid",
+            "/blocks/midi/set-port/{uuid}",
             post(handlers::set_port_for_midi),
         )
         .route("/nick", post(handlers::set_nick))
         .route("/nick", get(handlers::nick))
-        .route("/blocks/set-group/:uuid", post(handlers::set_group))
-        .route("/blocks/set-keybind/:uuid", post(handlers::set_keybind))
+        .route("/blocks/set-group/{uuid}", post(handlers::set_group))
+        .route("/blocks/set-keybind/{uuid}", post(handlers::set_keybind))
         .route("/interrupt", post(handlers::interrupt))
         .route("/abort", post(handlers::abort))
         .route("/", get(handlers::index))
@@ -386,10 +387,8 @@ async fn main() -> ExitCode {
         .with_state(app_state.clone());
 
     let ip: IpAddr = cli.ip.parse().unwrap();
-
     let addr = SocketAddr::from((ip, cli.port));
-
-    let Ok(builder) = axum::Server::try_bind(&addr) else {
+    let Ok(listener) = tokio::net::TcpListener::bind(addr).await else {
         tracing::error!("Address already in use at http://{addr}");
         return ExitCode::FAILURE;
     };
@@ -400,10 +399,14 @@ async fn main() -> ExitCode {
         addr
     };
 
-    tracing::info!("Connect to Harmonia, which is available at http://{display_address}");
-    let server = builder
-        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async {
+    let server = {
+        let app_state = app_state.clone();
+
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
             let ctrl_c = async {
                 tokio::signal::ctrl_c()
                     .await
@@ -429,8 +432,10 @@ async fn main() -> ExitCode {
                 _ = terminate => {},
                 _ = user_requested_abort => {},
             }
-        });
+        })
+    };
 
+    tracing::info!("Connect to Harmonia, which is available at http://{display_address}");
     if cli.open {
         tracing::debug!("opening UI in default browser");
         open::that_detached(format!("http://{display_address}")).unwrap();
@@ -482,10 +487,21 @@ async fn link_status_websocket_loop(
             (handlers::playing_status(app_state.clone()).await);
         };
 
-        if let Err(err) = socket.send(Message::Text(markup.into_string())).await {
+        if let Err(err) = socket
+            .send(Message::Text(markup.into_string().into()))
+            .await
+        {
             tracing::error!("websocket send to {addr} failed: {err}");
             break;
         }
     }
-    let _ = socket.close().await;
+    if let Err(e) = socket
+        .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+            code: axum::extract::ws::close_code::ERROR,
+            reason: Utf8Bytes::from_static("Failed to communicate with the server"),
+        })))
+        .await
+    {
+        tracing::error!("websocket close to {addr} failed: {e}");
+    }
 }

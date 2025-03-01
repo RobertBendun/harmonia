@@ -15,14 +15,12 @@
 
 use crate::{audio_engine, block, cache_path, AppState, Version};
 use axum::{
-    body::{Bytes, Full},
-    extract::{ConnectInfo, Multipart, Path, State},
-    http::{
-        header::{CONTENT_DISPOSITION, CONTENT_TYPE},
-        HeaderMap, Response, StatusCode,
-    },
+    extract::{ConnectInfo, Path, State},
+    http,
+    response::IntoResponse,
     Form,
 };
+use axum_extra::extract::Multipart;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use midir::MidiOutput;
 use rusty_link::SessionState;
@@ -188,7 +186,7 @@ pub async fn playing_status(app_state: State<Arc<AppState>>) -> Markup {
                         div style="height: 100%; background-color: gray" {}
                         (maud::PreEscaped("&#x221E;"));
                     }
-                } else {
+                } @else {
                     div class="progress" {
                         div style="height: 100%; background-color: gray" {}
                         (format!("{}%", current_playing_progress.0 * 100 / current_playing_progress.1));
@@ -404,13 +402,13 @@ pub async fn set_group(
     Form(SetGroup {
         group: mut group_to_set,
     }): Form<SetGroup>,
-) -> Result<Markup, StatusCode> {
+) -> Result<Markup, http::StatusCode> {
     let response = {
         let mut blocks = app_state.blocks.write().unwrap();
 
         let Some(midi_source) = blocks.get_mut(&uuid) else {
             error!("block#{uuid} not found");
-            return Err(StatusCode::NOT_FOUND);
+            return Err(http::StatusCode::NOT_FOUND);
         };
 
         if group_to_set.len() > linky_groups::MAX_GROUP_ID_LENGTH {
@@ -470,13 +468,13 @@ pub async fn set_keybind(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
     Form(SetKeybind { keybind }): Form<SetKeybind>,
-) -> StatusCode {
+) -> http::StatusCode {
     {
         let mut midi_sources = app_state.blocks.write().unwrap();
 
         let Some(block) = midi_sources.get_mut(&uuid) else {
             error!("block#{uuid} not found");
-            return StatusCode::NOT_FOUND;
+            return http::StatusCode::NOT_FOUND;
         };
 
         info!("Changing keybind for block#{uuid} to {keybind}");
@@ -487,7 +485,7 @@ pub async fn set_keybind(
         error!("set_keybind failed to remember current sources: {err:#}")
     }
 
-    StatusCode::OK
+    http::StatusCode::OK
 }
 
 // TODO: Should be select
@@ -525,17 +523,17 @@ pub async fn set_port_for_midi(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
     Form(SetPort { port }): Form<SetPort>,
-) -> Result<Markup, StatusCode> {
+) -> Result<Markup, http::StatusCode> {
     let mut blocks = app_state.blocks.write().unwrap();
 
     let Some(block) = blocks.get_mut(&uuid) else {
         error!("block#{uuid} was not found");
-        return Err(StatusCode::NOT_FOUND);
+        return Err(http::StatusCode::NOT_FOUND);
     };
 
     let block::Content::Midi(ref mut midi) = block.content else {
         error!("block#{uuid} is not a MIDI source");
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(http::StatusCode::BAD_REQUEST);
     };
 
     let max = app_state.connection.read().unwrap().ports.len();
@@ -555,14 +553,15 @@ pub async fn set_port_for_midi(
 pub async fn download_block_content(
     app_state: State<Arc<AppState>>,
     Path(uuid): Path<String>,
-) -> Response<Full<Bytes>> {
+) -> impl IntoResponse {
     let not_found = || {
-        let mut response = Response::new(Full::from("not found"));
-        *response.status_mut() = StatusCode::NOT_FOUND;
-        response
-            .headers_mut()
-            .insert(CONTENT_TYPE, "text/html".parse().unwrap());
-        response
+        let mut headers = http::HeaderMap::new();
+        headers.insert(http::header::CONTENT_TYPE, "text/plain".parse().unwrap());
+        (
+            http::StatusCode::NOT_FOUND,
+            headers,
+            "not found".bytes().collect(),
+        )
     };
 
     let blocks = app_state.blocks.read().unwrap();
@@ -574,16 +573,15 @@ pub async fn download_block_content(
     match &block.content {
         block::Content::SharedMemory { .. } => not_found(),
         block::Content::Midi(midi_source) => {
-            let mut response = Response::new(Full::from(midi_source.bytes.clone()));
-            let headers = &mut response.headers_mut();
+            let mut headers = http::HeaderMap::new();
             headers.insert(
-                CONTENT_DISPOSITION,
+                http::header::CONTENT_DISPOSITION,
                 format!("attachement; filename=\"{}\"", midi_source.file_name)
                     .parse()
                     .unwrap(),
             );
-            headers.insert(CONTENT_TYPE, "audio/midi".parse().unwrap());
-            response
+            headers.insert(http::header::CONTENT_TYPE, "audio/midi".parse().unwrap());
+            (http::StatusCode::OK, headers, midi_source.bytes.clone())
         }
     }
 }
@@ -651,6 +649,7 @@ pub async fn add_new_shered_memory_block(
 }
 
 /// Adds new MIDI block(s) based on the provided files in HTML Form
+#[axum::debug_handler]
 pub async fn add_new_midi_source_block(
     State(app_state): State<Arc<AppState>>,
     mut multipart: Multipart,
@@ -698,8 +697,8 @@ pub async fn add_new_midi_source_block(
 pub async fn abort(
     addr: ConnectInfo<crate::SocketAddr>,
     app_state: State<Arc<AppState>>,
-) -> HeaderMap {
-    let mut headers = HeaderMap::new();
+) -> http::HeaderMap {
+    let mut headers = http::HeaderMap::new();
 
     if addr.ip().is_loopback() {
         app_state.abort.notify_one();
