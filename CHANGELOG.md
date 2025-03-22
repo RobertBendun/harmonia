@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Interface improvements: message on empty blocks list, red background on delete mode button, "title" attributes that describe inputs. Harmonia should be as selve descriptive as possible
 - Enable Tokio multithreading
+- Refresh network interfaces list (allows to change networks when using Harmonia!)
+- Remove broken connections
 
 ### Changed
 
