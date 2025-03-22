@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-03-22
+
 ### Added
 
 - Interface improvements: message on empty blocks list, red background on delete mode button, "title" attributes that describe inputs. Harmonia should be as selve descriptive as possible
