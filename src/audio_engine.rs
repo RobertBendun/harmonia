@@ -14,7 +14,7 @@
 //! for automatic cleanup of previous task. Currently supported types of tasks are:
 //!
 //! * [play] ([Request::Play]) - ask worker to interrupt any ongoing task and start playing
-//! new one, possibly starting new synchronization group and session or joining existing ones.
+//!   new one, possibly starting new synchronization group and session or joining existing ones.
 //! * [interrupt] ([Request::Interrupt]) - stop playing currently played block if any
 //! * [quit] ([Request::Quit]) - request stop from worker and gracefull quit
 //!

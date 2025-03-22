@@ -7,9 +7,9 @@
 //!
 //! * participatory - user chooses to join the orchestra, not orchestra forces them to start
 //! * bottom-up - there is no central server or chosen leader, all hosts participate to create
-//! shared common synchronized state
+//!   shared common synchronized state
 //! * minimal configuration - users need to provide shared group name, that they are going to
-//! synchronize under
+//!   synchronize under
 
 use rusty_link::{AblLink, SessionState};
 use serde::{Deserialize, Serialize};
@@ -61,11 +61,14 @@ impl std::fmt::Display for GroupFrame {
     }
 }
 
+/// Constant used to distinguish linky groups from other fields (based on link)
+const LINKY_GROUPS_MAGIC: [u8; 4] = *b"grup";
+
 impl GroupFrame {
     /// Create new packet based on `group_id` from user and `timestamp` from [link][rusty_link]
     fn new(group_id: GroupId, timestamp: i64) -> Self {
         Self {
-            magic: *b"grup",
+            magic: LINKY_GROUPS_MAGIC,
             version: 1,
             group_id,
             timestamp,
@@ -76,7 +79,7 @@ impl GroupFrame {
     ///
     /// Allows for backwards compatibility in future releases
     fn is_supported(&self) -> bool {
-        self.magic == *b"grup" && self.version == 1
+        self.magic == LINKY_GROUPS_MAGIC && self.version == 1
     }
 }
 
@@ -176,7 +179,7 @@ enum Action {
 async fn negotatior(
     mut state: tokio::sync::mpsc::Receiver<Action>,
     link: Arc<AblLink>,
-    connection: Arc<net::Sockets>,
+    send_frame: tokio::sync::mpsc::Sender<GroupFrame>,
     is_playing: Arc<std::sync::atomic::AtomicBool>,
 ) {
     use tokio::time::{Duration, Instant};
@@ -254,7 +257,10 @@ async fn negotatior(
 
         if last_send_time.elapsed() >= TIMEOUT_DURATION {
             if let Some(frame) = current_group {
-                connection.send(frame).await;
+                send_frame
+                    .send(frame)
+                    .await
+                    .expect("send channel should be eternal");
                 last_send_time = tokio::time::Instant::now();
             }
         }
@@ -263,25 +269,21 @@ async fn negotatior(
 
 /// Create, initialize and start listening for group synchronization mechanism
 pub fn listen(link: std::sync::Arc<rusty_link::AblLink>) -> Groups {
-    let connection = Arc::new(net::Sockets::bind(link.is_enabled()));
     let (cancel, wait_for_cancel) = tokio::sync::mpsc::channel(1);
+    let (send_frame, recv_frame) = tokio::sync::mpsc::channel(4);
     let (send_action, state) = tokio::sync::mpsc::channel(4);
     let is_playing = Arc::new(atomic::AtomicBool::new(false));
-
-    let worker_connection = connection.clone();
-    let listener_connection = connection;
+    let is_enabled = link.is_enabled();
 
     Groups {
         actions: send_action.clone(),
         link: link.clone(),
         is_playing: is_playing.clone(),
         listener: tokio::spawn(async move {
-            listener_connection
-                .listen(send_action.clone(), wait_for_cancel)
-                .await;
+            net::listen(recv_frame, send_action.clone(), wait_for_cancel, is_enabled).await;
         }),
         worker: tokio::spawn(async move {
-            negotatior(state, link, worker_connection, is_playing).await;
+            negotatior(state, link, send_frame, is_playing).await;
         }),
         cancel,
     }
