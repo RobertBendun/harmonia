@@ -33,11 +33,13 @@ impl Connection {
     fn bind(
         &mut self,
         frames_out: tokio::sync::mpsc::Sender<(crate::GroupFrame, std::net::SocketAddr)>,
-    ) {
+    ) -> bool {
         /// How many times we can fail to establish multicast connection
         ///
         /// (probably unnesesary mechanism I don't remember why I introduced it)
         const MAX_TRIES: i32 = 5;
+
+        let sockets_count_before = self.sockets.len();
 
         'next_address: for addr in get_current_ipv4_addresses() {
             if self.established.contains(&addr) {
@@ -95,6 +97,8 @@ impl Connection {
             !self.sockets.is_empty(),
             "Cannot use Harmonia without a network over which we could synchronize!"
         );
+
+        self.sockets.len() - sockets_count_before > 0
     }
 
     /// Remove a set of ids that identify sockets from `sockets` field.
@@ -117,6 +121,7 @@ pub async fn listen(
     state: tokio::sync::mpsc::Sender<crate::Action>,
     mut wait_for_cancel: tokio::sync::mpsc::Receiver<()>,
     is_enabled: bool,
+    abl_link: Arc<rusty_link::AblLink>,
 ) {
     if !is_enabled {
         tracing::info!("Skipping linky_groups start since Link is disabled");
@@ -134,6 +139,7 @@ pub async fn listen(
     let mut rebind_multicast = tokio::time::interval(std::time::Duration::from_secs(5));
 
     let mut failures = std::collections::HashMap::new();
+
 
     'worker: loop {
         tokio::select! {
@@ -172,7 +178,11 @@ pub async fn listen(
             }
 
             _ = rebind_multicast.tick() => {
-                connection.bind(frames_out.clone());
+                if connection.bind(frames_out.clone()) {
+                    abl_link.enable(false);
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    abl_link.enable(true);
+                }
             }
 
 
@@ -188,10 +198,10 @@ pub async fn listen(
 
 /// Get all IPv4 interface addresses on local machine
 fn get_current_ipv4_addresses() -> Vec<Ipv4Addr> {
-    local_ip_address::list_afinet_netifas()
-        .unwrap()
+    pnet::datalink::interfaces()
         .iter()
-        .map(|(_, address)| *address)
+        .filter(|interface| interface.is_up() && interface.ips.len() > 0 && (interface.is_multicast() || interface.is_loopback()))
+        .flat_map(|interface| interface.ips.iter().map(|net| net.ip()))
         .filter(|address| address.is_ipv4())
         .map(|address| match address {
             IpAddr::V4(v4) => v4,

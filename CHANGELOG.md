@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Method to determine which network interface to connect to - which _should_ prevent noise during start on Windows machines
+
 ## [0.7.0] - 2025-03-23
 
 ### Changed
 
 - Bump required macOS version to 13 due to Github disabling macos-12 runner: https://github.com/actions/runner-images/issues/10721
-
 
 ## [0.6.0] - 2025-03-22
 

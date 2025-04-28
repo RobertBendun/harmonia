@@ -238,7 +238,8 @@ async fn negotatior(
                             let current_beat = session_state.beat_at_time(my_host_time, QUANTUM);
                             let desired_beat = current_beat - beat_difference;
 
-                            tracing::info!("Transitioning from {current_beat} to {desired_beat} with frame {frame}");
+                            tracing::info!("Transitioning from {current_beat} to {desired_beat}");
+                            tracing::info!("Moving from frame {current_frame} to frame {frame}");
 
                             session_state.request_beat_at_time(desired_beat, my_host_time, QUANTUM);
                             link.commit_app_session_state(&session_state);
@@ -275,12 +276,14 @@ pub fn listen(link: std::sync::Arc<rusty_link::AblLink>) -> Groups {
     let is_playing = Arc::new(atomic::AtomicBool::new(false));
     let is_enabled = link.is_enabled();
 
+    let link2 = link.clone();
+
     Groups {
         actions: send_action.clone(),
         link: link.clone(),
         is_playing: is_playing.clone(),
         listener: tokio::spawn(async move {
-            net::listen(recv_frame, send_action.clone(), wait_for_cancel, is_enabled).await;
+            net::listen(recv_frame, send_action.clone(), wait_for_cancel, is_enabled, link2).await;
         }),
         worker: tokio::spawn(async move {
             negotatior(state, link, send_frame, is_playing).await;
