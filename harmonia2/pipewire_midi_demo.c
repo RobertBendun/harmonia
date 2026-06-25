@@ -1,11 +1,21 @@
+#include "pipewire/stream.h"
 #include <errno.h>
+#include <libgen.h>
 #include <pipewire/pipewire.h>
+#include <spa/utils/result.h>
+#include <spa/pod/builder.h>
+#include <spa/pod/vararg.h>
+#include <spa/control/control.h>
+#include <spa/param/format.h>
 #include <stdlib.h>
 #include <string.h>
-#include <spa/utils/result.h>
+
 
 #define NOB_IMPLEMENTATION
 #include "nob.h"
+
+#include <midifile.h>
+#include <midievent.h>
 
 struct node_info
 {
@@ -27,7 +37,7 @@ struct userdata
 	struct pw_core *core;
 	struct pw_registry *registry;
 
-	struct spa_hook core_listener, registry_listener;
+	struct spa_hook core_listener, registry_listener, stream_listener;
 
 	int sync;
 
@@ -42,6 +52,13 @@ struct userdata
 		struct node_info *items;
 		size_t count, capacity;
 	} found_nodes;
+
+	struct midi_file *midi_file;
+	struct midi_file_info midi_file_info;
+
+	struct pw_stream *stream;
+	uint64_t clock_time;
+	struct spa_io_position *position;
 };
 
 static void do_quit(void *userdata, int signal_number)
@@ -143,13 +160,183 @@ static void registry_event_global(
 	}
 }
 
+static int midi_play(struct userdata *d, void *src, unsigned int n_frames)
+{
+	int res;
+	struct spa_pod_builder b = {};
+	struct spa_pod_frame f;
+	uint32_t first_frame, last_frame;
+	bool have_data = false;
+
+	spa_pod_builder_init(&b, src, n_frames);
+	spa_pod_builder_push_sequence(&b, &f, 0);
+
+	first_frame = d->clock_time;
+	last_frame = first_frame + d->position->clock.duration;
+	d->clock_time = last_frame;
+
+	for (;;) {
+		uint32_t frame;
+		struct midi_event ev;
+		size_t size;
+
+		res = midi_file_next_time(d->midi_file, &ev.sec);
+		if (res <= 0) {
+			if (have_data)
+				break;
+			return res;
+		}
+
+		frame = (uint32_t)(ev.sec * d->position->clock.rate.denom);
+		if (frame < first_frame)
+			frame = 0;
+		else if (frame < last_frame)
+			frame -= first_frame;
+		else
+			break;
+
+		midi_file_read_event(d->midi_file, &ev);
+		midi_event_dump(stderr, &ev);
+
+		spa_pod_builder_control(&b, frame, SPA_CONTROL_Midi);
+		spa_pod_builder_bytes(&b, ev.data, ev.size);
+
+		size = ev.size;
+
+		if (ev.type != MIDI_EVENT_TYPE_MIDI1 || size < 1 || ev.data[0] == 0xff)
+			continue;
+
+		have_data = true;
+	}
+	spa_pod_builder_pop(&b, &f);
+
+	return b.state.offset;
+}
+
+void on_process(void *userdata)
+{
+	struct userdata *data = userdata;
+	struct pw_buffer *b;
+	struct spa_buffer *buf;
+	struct spa_data *d;
+	uint8_t *p;
+
+	// Get buffer that we can fill with data
+	if ((b = pw_stream_dequeue_buffer(data->stream)) == NULL)
+		return;
+
+	buf = b->buffer;
+	d = &buf->datas[0];
+
+	bool have_data = false;
+
+	if ((p = d->data) == NULL)
+		return;
+
+	int n_frames = d->maxsize;
+	if (b->requested)
+		n_frames = SPA_MIN(n_frames, (int)b->requested);
+
+	int n_fill_frames = midi_play(data, p, n_frames);
+	if (n_fill_frames > 0 || n_frames == 0) {
+		d->chunk->offset = 0;
+		d->chunk->stride = 1;
+		d->chunk->size = n_fill_frames;
+		have_data = true;
+		b->size = n_fill_frames;
+	}
+
+	if (have_data)
+		pw_stream_queue_buffer(data->stream, b);
+	else
+		pw_stream_flush(data->stream, true);
+}
+
+static void on_io_changed(void *userdata, uint32_t id, void *data, uint32_t size)
+{
+	(void)size;
+	struct userdata *d = userdata;
+
+	switch (id) {
+	case SPA_IO_Position:
+		d->position = data;
+
+		char const* state = "(undefined)";
+		switch (d->position->state) {
+		case SPA_IO_POSITION_STATE_RUNNING: state = "running"; break;
+		case SPA_IO_POSITION_STATE_STARTING: state = "starting"; break;
+		case SPA_IO_POSITION_STATE_STOPPED: state = "stopped"; break;
+		}
+
+		nob_log(NOB_INFO,
+				"Position changed:"
+				" clock.clock.rate=%u/%u"
+				" clock.duration=%lu"
+				" state=%s"
+				, d->position->clock.rate.num, d->position->clock.rate.denom
+				, d->position->clock.duration
+				, state
+				);
+		break;
+
+	default:
+		break;
+	}
+}
+
+static void on_state_changed(void *userdata, enum pw_stream_state old, enum pw_stream_state state, const char *error)
+{
+	struct userdata *data = userdata;
+	nob_log(NOB_INFO, "stream state changed %s -> %s", pw_stream_state_as_string(old), pw_stream_state_as_string(state));
+
+	switch (state) {
+	case PW_STREAM_STATE_ERROR:
+		nob_log(NOB_ERROR, "stream at node %d failed: %s\n", pw_stream_get_node_id(data->stream), error);
+		pw_main_loop_quit(data->loop);
+		break;
+
+	case PW_STREAM_STATE_PAUSED:
+	case PW_STREAM_STATE_CONNECTING:
+	case PW_STREAM_STATE_UNCONNECTED:
+	case PW_STREAM_STATE_STREAMING:
+		break;
+	}
+}
+
+static void on_drained(void *userdata)
+{
+	struct userdata *data = userdata;
+	pw_main_loop_quit(data->loop);
+}
 
 int main(int argc, char **argv)
 {
 	int exit_code = 0;
 	struct userdata data = {};
+	uint8_t buffer[1024];
+	struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
 	pw_init(&argc, &argv);
 
+	char const* program_name = nob_shift_args(&argc, &argv);
+
+	char const* source_file = argc > 0 ? nob_shift_args(&argc, &argv) : NULL;
+	if (!source_file) {
+		fprintf(stderr, "usage: %s <midifile>\n", basename(strdup(program_name)));
+		exit_code = 1;
+		goto cleanup;
+	}
+
+	data.midi_file = midi_file_open(source_file, "r", &data.midi_file_info);
+	if (!data.midi_file) {
+		fprintf(stderr, "[ERROR] Failed to read midi file %s: %s\n", source_file, strerror(errno));
+		exit_code = 1;
+		goto cleanup;
+	}
+
+	nob_log(NOB_INFO, "MIDI File: format %08x ntracks:%d div:%d",
+			data.midi_file_info.format,
+			data.midi_file_info.ntracks,
+			data.midi_file_info.division);
 
 	data.loop = pw_main_loop_new(NULL);
 	if (data.loop == NULL) {
@@ -213,10 +400,72 @@ int main(int argc, char **argv)
 		printf("%3s | %s:%s\n", port.port_serial, node_name, port.port_name);
 	}
 
+	// pw_stream_new(struct pw_core *core, const char *name, struct pw_properties *props);
+	data.stream = pw_stream_new(data.core, "midi-src",
+			pw_properties_new(
+				PW_KEY_MEDIA_TYPE, "Midi",
+				PW_KEY_MEDIA_CATEGORY, "Playback",
+				PW_KEY_MEDIA_ROLE, "Music",
+				NULL
+			)
+	);
+	if (!data.stream) {
+		nob_log(NOB_ERROR, "Failed to create stream: %s\n", strerror(errno));
+		exit_code = 1;
+		goto cleanup;
+	}
+
+	// pw_stream_add_listener(struct pw_stream *stream, struct spa_hook *listener, const struct pw_stream_events *events, void *data)
+
+	static struct pw_stream_events const stream_events = {
+		PW_VERSION_STREAM_EVENTS,
+		.process = on_process,
+		.state_changed = on_state_changed,
+		.io_changed = on_io_changed,
+		.drained = on_drained,
+	};
+
+	pw_stream_add_listener(data.stream, &data.stream_listener, &stream_events, &data);
+
+
+	struct spa_pod *params[2];
+	size_t n_params = 0;
+	params[n_params++] = spa_pod_builder_add_object(&b,
+			SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
+			SPA_FORMAT_mediaType,		SPA_POD_Id(SPA_MEDIA_TYPE_application),
+			SPA_FORMAT_mediaSubtype,	SPA_POD_Id(SPA_MEDIA_SUBTYPE_control));
+
+	// pw_properties_set(props, PW_KEY_FORMAT_DSP, "8 bit raw midi");
+
+	// pw_stream_connect(struct pw_stream *stream, enum spa_direction direction, uint32_t target_id, enum pw_stream_flags flags, const struct spa_pod **params, uint32_t n_params)
+
+	int ret = pw_stream_connect(
+		data.stream,
+		PW_DIRECTION_OUTPUT,
+		PW_ID_ANY,
+		PW_STREAM_FLAG_MAP_BUFFERS,
+		(const struct spa_pod **)params, n_params);
+
+	if (ret < 0) {
+		nob_log(NOB_ERROR, "Failed to connect to stream: %s\n", spa_strerror(ret));
+		goto cleanup;
+	}
+
+	pw_main_loop_run(data.loop);
+
 cleanup:
-	if (data.core)    pw_core_disconnect(data.core);
+	if (data.stream) {
+		spa_hook_remove(&data.stream_listener);
+		pw_stream_disconnect(data.stream);
+		pw_stream_destroy(data.stream);
+	}
+	if (data.core) {
+		spa_hook_remove(&data.core_listener);
+		pw_core_disconnect(data.core);
+	}
 	if (data.context) pw_context_destroy(data.context);
 	if (data.loop)    pw_main_loop_destroy(data.loop);
+	if (data.midi_file) midi_file_close(data.midi_file);
 	pw_deinit();
 	return exit_code;
 }
