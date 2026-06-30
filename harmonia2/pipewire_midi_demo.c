@@ -12,7 +12,7 @@
 
 
 #define NOB_IMPLEMENTATION
-#include "nob.h"
+#include "vendor/nob.h"
 
 #include <midifile.h>
 #include <midievent.h>

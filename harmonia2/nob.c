@@ -1,5 +1,5 @@
 #define NOB_IMPLEMENTATION
-#include "nob.h"
+#include "vendor/nob.h"
 
 void append_libpipewire(Nob_Cmd *cmd)
 {
