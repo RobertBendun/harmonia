@@ -7,9 +7,12 @@
 #include <spa/pod/vararg.h>
 #include <spa/control/control.h>
 #include <spa/param/format.h>
+#include <spa/debug/types.h>
+#include <spa/pod/pod.h>
+#include <spa/pod/parser.h>
+#include <spa/debug/pod.h>
 #include <stdlib.h>
 #include <string.h>
-
 
 #define NOB_IMPLEMENTATION
 #include "vendor/nob.h"
@@ -27,7 +30,7 @@ struct port_info
 {
 	size_t node_id;
 	char const* port_name;
-	char const* port_serial;
+	char const* object_path;
 };
 
 struct userdata
@@ -59,9 +62,13 @@ struct userdata
 	struct pw_stream *stream;
 	uint64_t clock_time;
 	struct spa_io_position *position;
+
+	char const* our_output_port_object_path;
+	char const* external_input_port_object_path;
 };
 
-static void do_quit(void *userdata, int signal_number)
+static void
+do_quit(void *userdata, int signal_number)
 {
 	(void)signal_number;
 	struct userdata *data = userdata;
@@ -69,7 +76,8 @@ static void do_quit(void *userdata, int signal_number)
 }
 
 
-static void on_core_done(void *userdata, uint32_t id, int seq)
+static void
+on_core_done(void *userdata, uint32_t id, int seq)
 {
 	(void)id;
 	struct userdata *data = userdata;
@@ -78,7 +86,8 @@ static void on_core_done(void *userdata, uint32_t id, int seq)
 	pw_main_loop_quit(data->loop);
 }
 
-static void on_core_error(void *data, uint32_t id, int seq, int res, const char *message)
+static void
+on_core_error(void *data, uint32_t id, int seq, int res, const char *message)
 {
 	struct userdata *d = data;
 
@@ -89,7 +98,8 @@ static void on_core_error(void *data, uint32_t id, int seq, int res, const char 
 		pw_main_loop_quit(d->loop);
 }
 
-static void registry_event_global(
+static void
+registry_event_global(
 	void *userdata,
 	uint32_t id,
 	uint32_t permissions,
@@ -107,36 +117,49 @@ static void registry_event_global(
 
 	if (strcmp(type, PW_TYPE_INTERFACE_Port) == 0) {
 		char const* direction = spa_dict_lookup(props, PW_KEY_PORT_DIRECTION);
-		if (!direction || strcmp(direction, "in") == 0)
+		if (!direction)
 			return;
 
 		char const* format = spa_dict_lookup(props, PW_KEY_FORMAT_DSP);
 		if (!format || strcmp(format, "8 bit raw midi") != 0)
 			return;
 
-		char const* serial = spa_dict_lookup(props, PW_KEY_OBJECT_SERIAL);
-		if (!serial)
-			return;
-
-		char const* name = spa_dict_lookup(props, PW_KEY_PORT_NAME);
-		if (!name)
-			return;
-
 		char const* node_id = spa_dict_lookup(props, PW_KEY_NODE_ID);
 		if (!node_id)
 			return;
 
-		// struct spa_dict_item const* item;
-		// spa_dict_for_each(item, props) {
-		// 	printf("Port[%d][%s] = %s\n", id, item->key, item->value);
-		// }
+		uint32_t parsed_node_id;
+		int r = sscanf(node_id, "%"PRIu32, &parsed_node_id);
+		assert(r == 1);
 
-		struct port_info port = {
-			.port_name = strdup(name),
-			.port_serial = strdup(serial),
-			.node_id = atoi(node_id),
-		};
-		nob_da_append(&data->found_ports, port);
+		if (strcmp(direction, "in") == 0) {
+			char const* path = spa_dict_lookup(props, PW_KEY_OBJECT_PATH);
+			if (!path)
+				return;
+
+			char const* name = spa_dict_lookup(props, PW_KEY_PORT_NAME);
+			if (!name)
+				return;
+
+
+			// struct spa_dict_item const* item;
+			// spa_dict_for_each(item, props) {
+			// 	printf("Port[%d][%s] = %s\n", id, item->key, item->value);
+			// }
+
+			struct port_info port = {
+				.port_name = strdup(name),
+				.object_path = strdup(path),
+				.node_id = atoi(node_id),
+			};
+			nob_da_append(&data->found_ports, port);
+		} else {
+			if (data->stream && parsed_node_id == pw_stream_get_node_id(data->stream)) {
+				data->our_output_port_object_path = spa_dict_lookup(props, PW_KEY_OBJECT_PATH);
+				assert(data->our_output_port_object_path);
+				pw_main_loop_quit(data->loop);
+			}
+		}
 
 		return;
 	}
@@ -160,7 +183,16 @@ static void registry_event_global(
 	}
 }
 
-static int midi_play(struct userdata *d, void *src, unsigned int n_frames)
+struct midi1_note
+{
+	uint8_t channel;
+	uint8_t note;
+	uint8_t velocity;
+	enum { MIDI1_NOTE_OFF, MIDI1_NOTE_ON } state;
+};
+
+static int
+midi_play(struct userdata *d, void *src, unsigned int n_frames)
 {
 	int res;
 	struct spa_pod_builder b = {};
@@ -213,7 +245,8 @@ static int midi_play(struct userdata *d, void *src, unsigned int n_frames)
 	return b.state.offset;
 }
 
-void on_process(void *userdata)
+void
+on_process(void *userdata)
 {
 	struct userdata *data = userdata;
 	struct pw_buffer *b;
@@ -252,12 +285,14 @@ void on_process(void *userdata)
 		pw_stream_flush(data->stream, true);
 }
 
-static void on_io_changed(void *userdata, uint32_t id, void *data, uint32_t size)
+static void
+on_io_changed(void *userdata, uint32_t id, void *data, uint32_t size)
 {
 	(void)size;
 	struct userdata *d = userdata;
 
 	switch (id) {
+
 	case SPA_IO_Position:
 		d->position = data;
 
@@ -284,10 +319,12 @@ static void on_io_changed(void *userdata, uint32_t id, void *data, uint32_t size
 	}
 }
 
-static void on_state_changed(void *userdata, enum pw_stream_state old, enum pw_stream_state state, const char *error)
+static void
+on_state_changed(void *userdata, enum pw_stream_state old, enum pw_stream_state state, const char *error)
 {
 	struct userdata *data = userdata;
-	nob_log(NOB_INFO, "stream state changed %s -> %s", pw_stream_state_as_string(old), pw_stream_state_as_string(state));
+	nob_log(NOB_INFO, "stream %d state changed %s -> %s", pw_stream_get_node_id(data->stream), pw_stream_state_as_string(old), pw_stream_state_as_string(state));
+
 
 	switch (state) {
 	case PW_STREAM_STATE_ERROR:
@@ -303,13 +340,30 @@ static void on_state_changed(void *userdata, enum pw_stream_state old, enum pw_s
 	}
 }
 
-static void on_drained(void *userdata)
+static void
+on_drained(void *userdata)
 {
 	struct userdata *data = userdata;
 	pw_main_loop_quit(data->loop);
 }
 
-int main(int argc, char **argv)
+static void link_proxy_destroy(void *data)
+{
+	nob_log(NOB_INFO, "link proxy destroyed");
+}
+
+static void link_proxy_removed(void *data)
+{
+	nob_log(NOB_INFO, "link proxy removed");
+}
+
+static void link_proxy_error(void *data, int seq, int res, const char *message)
+{
+	nob_log(NOB_INFO, "link proxy error: %d:%d:%s", seq, res, message);
+}
+
+int
+main(int argc, char **argv)
 {
 	int exit_code = 0;
 	struct userdata data = {};
@@ -384,6 +438,8 @@ int main(int argc, char **argv)
 	data.sync = pw_core_sync(data.core, PW_ID_CORE, data.sync);
 	pw_main_loop_run(data.loop);
 
+	char const *first_port = NULL, *first_node = NULL, *first_obj_path = NULL;
+
 	for (size_t i = 0; i < data.found_ports.count; ++i) {
 		struct port_info port = data.found_ports.items[i];
 		char const *node_name = NULL;
@@ -397,8 +453,16 @@ int main(int argc, char **argv)
 		}
 		assert(node_name != NULL);
 
-		printf("%3s | %s:%s\n", port.port_serial, node_name, port.port_name);
+		if (first_port == NULL) first_port = port.port_name;
+		if (first_node == NULL) first_node = node_name;
+		if (first_obj_path == NULL) first_obj_path = port.object_path;
+
+		nob_log(NOB_INFO, "%3zu | %s:%s", i, node_name, port.port_name);
 	}
+
+	nob_log(NOB_INFO, "No MIDI playback target specified, choosing the first one: %s:%s",
+			first_node, first_port);
+	data.external_input_port_object_path = first_obj_path;
 
 	// pw_stream_new(struct pw_core *core, const char *name, struct pw_properties *props);
 	data.stream = pw_stream_new(data.core, "midi-src",
@@ -451,6 +515,24 @@ int main(int argc, char **argv)
 		goto cleanup;
 	}
 
+	pw_main_loop_run(data.loop);
+
+	struct pw_properties *props = pw_properties_new(
+			PW_KEY_LINK_OUTPUT_PORT, data.our_output_port_object_path,
+			PW_KEY_LINK_INPUT_PORT, data.external_input_port_object_path,
+			NULL);
+
+	struct pw_proxy *proxy = pw_core_create_object(data.core, "link-factory", PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &props->dict, 0);
+
+	assert(proxy);
+	static const struct pw_proxy_events link_proxy_events = {
+		PW_VERSION_PROXY_EVENTS,
+		.destroy = link_proxy_destroy,
+		.removed = link_proxy_removed,
+		.error = link_proxy_error,
+	};
+	struct spa_hook listener = {};
+	pw_proxy_add_listener(proxy, &listener, &link_proxy_events, &data);
 	pw_main_loop_run(data.loop);
 
 cleanup:
