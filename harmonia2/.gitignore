@@ -2,4 +2,5 @@ compile_commands.json
 nob
 nob.old
 pipewire_midi_demo
+linux_network_demo
 *.o

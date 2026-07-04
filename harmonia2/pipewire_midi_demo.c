@@ -362,6 +362,20 @@ static void link_proxy_error(void *data, int seq, int res, const char *message)
 	nob_log(NOB_INFO, "link proxy error: %d:%d:%s", seq, res, message);
 }
 
+// Current program does:
+//   1. Pipewire initialization
+//   2. Adding monitoring of registry change events to notice new ports and nodes
+//   3. Going into main loop to collect new ports and nodes
+//   4. Determine where we want to connect
+//   5. Create and connect stream
+//   6. Wait for registry event with our stream port
+//   7. Connect our stream port with external port that we found later
+//   8. Move data from MIDI file to the stream
+//
+//  Things to figure out
+//   1. Switching between MIDI outputs
+//   2. Clocks
+
 int
 main(int argc, char **argv)
 {
