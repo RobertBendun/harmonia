@@ -61,6 +61,9 @@ bool build_linux_network_demo(Nob_Cmd *cmd)
 {
 	if (build_always || nob_needs_rebuild1("linux_network_demo", "linux_network_demo.c")) {
 		nob_cc(cmd);
+		nob_cc_flags(cmd);
+		nob_cmd_append(cmd, "-fsanitize=undefined,address");
+		nob_cmd_append(cmd, "-ggdb");
 		nob_cc_output(cmd, "linux_network_demo");
 		nob_cc_inputs(cmd, "linux_network_demo.c");
 		if (!nob_cmd_run(cmd)) return false;
